@@ -14,14 +14,14 @@ See [SCOPE.md](SCOPE.md) for the goal and [DESIGN.md](DESIGN.md) for how the pie
 
 ## Where the work is tracked
 
-Tensomite's issues #156 to #176 were written for this port, and all of them stay in tensomite except A-01 to A-06 (tensomite#171 to #176), which are this repo's implementation steps and are being deleted there. The milestones below replace them, and each milestone's exit criteria carry the acceptance detail. The library issues (G-01 to G-09, D-01), the data-tool issues (D-02 to D-05) and the epic (#156) are kept, and M3 links to D-02 to D-05 rather than duplicating them. New library gaps found along the way are opened in tensomite and linked from here.
+Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensomite#171 to #176) and the data-tool issues D-02 to D-05 are this repo's work: the A issues were deleted there and the D issues closed as won't-fix. The milestones below replace them, and each milestone's exit criteria carry the acceptance detail. The library issues (G-01 to G-09, D-01) and the epic (#156) stay in tensomite. New library gaps found along the way are opened in tensomite and linked from here.
 
 | Here | Original key | Tensomite |
 |---|---|---|
-| M0 Foundation | | |
+| M0 Foundation (done, #1) | | |
 | M1 Reference fixtures and the model | A-01, A-02 | |
 | M2 The optimizer | A-03 | G-02, G-03 (done in 0.8.0) |
-| M3 Data tools and the dataloader | | D-01 (done in 0.8.0), D-02 to D-05 (tracked in tensomite) |
+| M3 Data tools and the dataloader | D-02 to D-05 | D-01 (done in 0.8.0) |
 | M4 Training loop and metric | A-04, A-05 | G-05 (done), memory high-water mark (new) |
 | M5 The agent loop | A-06 | G-09 (done) |
 | M6 Reference scale | | G-01, G-07, G-08, fused cross-entropy (M14) |
@@ -48,7 +48,7 @@ M1 and M2 can run alongside M3: one needs Python and PyTorch, the other needs th
 
 ## Milestones
 
-### M0: Foundation
+### M0: Foundation (done)
 
 1. Add the `Makefile` that `ops.yml` calls (`spec`, `lint`, `build`, `test`), a spec helper, and an ameba configuration. `make` is the primary interface; `ops` wraps it as a convenience.
 2. Commit the [spike](#bringing-in-the-spike) unchanged in logic, as the first commit after the foundation, under `spikes/`.
@@ -63,7 +63,7 @@ Exit: `make test` passes in CI on Linux and macOS, `make build` builds the spike
 2. The model in `train.cr`, from the spike, loaded from the fixture weights with `Module#load(transposed:)`.
 3. Specs for loss, gradients and per-token loss, plus parameter counts and FLOPs per token against the original at depth 8.
 
-Exit: loss and gradients match within the documented tolerance on CPU/BLAS and on each GPU device available; counts equal the original's; fixtures regenerate from one command.
+Exit: loss and gradients match within the documented tolerance on CPU/BLAS, on CUDA (the GB10) and on Metal (the M5 Pro); counts equal the original's; fixtures regenerate from one command.
 
 ### M2: The optimizer
 
@@ -92,7 +92,7 @@ Exit: token ids for the first documents equal what `prepare.py` produces; tokeni
 4. Peak memory for the summary: ask tensomite for a device high-water mark, and report `0.0` with a note until it exists.
 5. A scaled-down profile (Decision H) with its own baseline numbers.
 
-Exit: a scaled-down run finishes inside its budget on BLAS and on one GPU and prints a block that `program.md`'s greps parse; `val_bpb` on the fixture batch equals the original's to four significant digits; two runs with one seed give identical losses.
+Exit: a scaled-down run finishes inside its budget on BLAS, the GB10 and the M5 Pro, and prints a block that `program.md`'s greps parse; `val_bpb` on the fixture batch equals the original's to four significant digits; two runs with one seed give identical losses.
 
 ### M5: The agent loop
 
@@ -103,7 +103,7 @@ Exit: the cycles' `results.tsv`, the commit log and a short write-up (what worke
 
 ### M6: Reference scale
 
-Depends on tensomite's M14. Run depth 8 and sequence 2,048, record tokens per second, memory and `val_bpb` against the original's, with every deviation stated. If M14 is not done, record what the scaled-down profile reaches and what blocks the rest.
+Depends on tensomite's M14. On the GB10, run depth 8 and sequence 2,048, record tokens per second, memory and `val_bpb` against the original's, with every deviation stated. If M14 is not done, record what the scaled-down profile reaches and what blocks the rest.
 
 Exit: a table of reference-scale results, or a written account of what blocks them.
 
@@ -134,7 +134,7 @@ Lettered as in tensomite; each is recorded here when made.
 - **F. Python only for fixtures.** Settled. Fixtures are committed, so CI needs no Python.
 - **G. `F32` until tensomite has BF16 compute.** Settled. Fixtures are made in `F32` with the original's BF16 casts removed.
 - **H. Profiles.** Open. A `reference` profile (depth 8, sequence 2,048, vocabulary 8,192) and a scaled-down one chosen at M4 (candidates: the same data with sequence 512 and depth 4; or a smaller dataset). A profile is a compile-time flag that picks a constants set, with its own cache directory.
-- **I. Reference machine.** Open. Which device carries the M4 to M6 numbers (the GB10 on CUDA, a Mac on Metal, or both).
+- **I. Reference machines.** Settled. The GB10 (DGX Spark, CUDA) carries long runs and the reference numbers from M4 on. The M5 Pro (Metal) is a supported device, not a fallback: every exit that runs a model on a GPU is shown on both, and the scaled-down profile has a baseline on each. Hosted CI has no GPU, so GPU evidence comes from runs on these two machines, pasted into the PR.
 
 ## Risks
 

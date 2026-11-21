@@ -103,7 +103,7 @@ The dataloader memory-maps the shards, keeps a buffer of documents, applies best
 
 ## Devices and builds
 
-The device is chosen by flag: `cpu` is tensomite's naive oracle, kept for parity checks, and is too slow to train on; `blas` is the host path; `cuda` and `metal` are the GPU paths. Runs use `crystal build --release`, which on a 2-core container built the spike in 27 s and ran about 2.5 times faster than `-O3`; the agent's loop is "edit, build, run".
+The device is chosen by flag: `cpu` is tensomite's naive oracle, kept for parity checks, and is too slow to train on; `blas` is the host path; `cuda` and `metal` are the GPU paths. The GB10 (CUDA) carries long runs and reference numbers; the M5 Pro (Metal) is supported on equal terms, with every GPU exit shown on both (PLAN, Decision I). Runs use `crystal build --release`, which on a 2-core container built the spike in 27 s and ran about 2.5 times faster than `-O3`; the agent's loop is "edit, build, run".
 
 ## Testing
 
@@ -116,5 +116,4 @@ The device is chosen by flag: `cpu` is tensomite's naive oracle, kept for parity
 
 1. Where Muon lives, library or app (PLAN, Decision E).
 2. The scaled-down profile: dataset, sequence length, depth (Decision H).
-3. The reference machine for M4 onward (Decision I).
-4. Whether `peak_vram_mb` waits for a tensomite memory high-water mark or reports process memory meanwhile.
+3. Whether `peak_vram_mb` waits for a tensomite memory high-water mark or reports process memory meanwhile.
