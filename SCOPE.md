@@ -65,7 +65,7 @@ These are the parts that make a result mean something, so they are kept exact:
 
 The project has succeeded when:
 
-1. `ops test` passes, including every parity spec.
+1. `make test` passes, including every parity spec.
 2. A scaled-down profile trains inside its budget on at least one GPU and on CPU, and prints a `val_bpb`.
 3. An agent completes at least ten unattended cycles from `program.md`, with the log committed as evidence.
 4. Each gap found on the way is an issue in tensomite, closed or consciously deferred.

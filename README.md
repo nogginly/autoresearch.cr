@@ -20,7 +20,6 @@ Milestone M0 (foundation). There is no `train` or `prepare` yet. What builds and
    ```bash
    make deps
    ```
-   With [`ops`](https://github.com/nickthecook/ops), `ops up` does the same.
 3. Run the specs and the linter:
    ```bash
    make test

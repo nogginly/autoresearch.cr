@@ -13,20 +13,21 @@ How to build, test and change this app. For how it works, see [DESIGN.md](DESIGN
    ```bash
    make deps
    ```
-   This runs `shards install`, then compiles ameba into `bin/ameba`. With [`ops`](https://github.com/nickthecook/ops), `ops up` does the same from `ops.yml`.
+   This runs `shards install` against the committed `shard.lock`, then compiles ameba into `bin/ameba`.
 
 ## Everyday commands
 
-Every `ops` action calls a `make` target, so either works.
+`make` is the interface. CI calls the same targets, so a clean `make test` locally means a clean CI run, give or take the platform.
 
-| Task | `make` | `ops` |
-|---|---|---|
-| Run the specs, in random order | `make spec` | `ops spec` |
-| Check formatting and lint | `make lint` | `ops lint` |
-| Fix formatting | `make format` | |
-| Build the programs into `bin/` | `make build` | `ops build` |
-| Everything before a PR | `make test` (specs, then lint) | `ops test` |
-| Remove built programs | `make clean` | |
+| Task | Command |
+|---|---|
+| Install shards and build the linter | `make deps` |
+| Run the specs, in random order | `make spec` |
+| Check formatting and lint | `make lint` |
+| Fix formatting | `make format` |
+| Build the programs into `bin/` | `make build` |
+| Everything before a PR | `make test` (specs, then lint) |
+| Remove built programs | `make clean` |
 
 ```mermaid
 flowchart LR
@@ -65,10 +66,35 @@ The spike hard-codes `BLAS`. `train` will take `--device cpu|blas|cuda|metal` (P
 
 **High system time is OpenBLAS, not the collector.** OpenBLAS's worker threads busy-wait between calls, so `time` reports several times the wall time as `user` and `sys`. `OPENBLAS_NUM_THREADS=1` removes it, at little cost for models this small.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request, on Linux (OpenBLAS) and macOS (Accelerate), with Crystal pinned to the minimum in `shard.yml`. Each job runs `make deps`, `make test` and `make build`, then trains the spike for 20 steps as a smoke test. `lib/` and `bin/ameba` are cached, keyed on the OS, the Crystal version and `shard.lock`.
+
+To change dependencies, edit `shard.yml`, run `shards update` (or `shards install` for a new shard), and commit both files. `shard.lock` is committed so every machine, CI included, builds against the same versions.
+
+## Optional: `ops`
+
+[`ops`](https://github.com/nickthecook/ops) is a convenience wrapper. Each action in `ops.yml` calls a `make` target, so nothing is available only through `ops`; actions that are not `make` calls may be added later.
+
+| `ops` | Runs |
+|---|---|
+| `ops up` | `brew install crystal`, then `make deps` |
+| `ops spec` | `make spec` |
+| `ops lint` | `make lint` |
+| `ops build` | `make build` |
+| `ops test` | `make test` |
+| `ops run FILE` | `crystal run FILE` |
+| `ops wipe` | `crystal clear_cache` |
+
+`ops up` expects Homebrew for Crystal. Without it, install Crystal as in Setup and use `make deps`.
+
 ## Layout
 
 ```
-Makefile                 the targets ops.yml calls
+Makefile                 deps, spec, lint, format, build, test, clean
+shard.lock               pinned dependency versions, committed
+.github/workflows/ci.yml make deps, test and build on Linux and macOS
+ops.yml                  optional ops actions, each a make call
 .ameba.yml               lint configuration; lib/, bin/ and spikes/ are excluded
 spec/spec_helper.cr      requires tensomite and its BLAS device; DEVICE, tensor, expect_close
 spec/*_spec.cr           specs; each milestone's exit has a `describe "Mn exit: …"` block

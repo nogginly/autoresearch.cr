@@ -50,11 +50,12 @@ M1 and M2 can run alongside M3: one needs Python and PyTorch, the other needs th
 
 ### M0: Foundation
 
-1. Add the `Makefile` that `ops.yml` calls (`spec`, `lint`, `build`, `test`), a spec helper, and an ameba configuration.
+1. Add the `Makefile` that `ops.yml` calls (`spec`, `lint`, `build`, `test`), a spec helper, and an ameba configuration. `make` is the primary interface; `ops` wraps it as a convenience.
 2. Commit the [spike](#bringing-in-the-spike) unchanged in logic, as the first commit after the foundation, under `spikes/`.
 3. Fill in `README.md` and `DEVELOPMENT.md` (build, test, device flags, the `--release` build for runs).
+4. Commit `shard.lock`, and add CI that runs `make test` and `make build` on Linux and macOS.
 
-Exit: `ops test` passes on Linux and macOS, `make build` builds the spike, and the README's quick start works from a clean checkout.
+Exit: `make test` passes in CI on Linux and macOS, `make build` builds the spike, and the README's quick start works from a clean checkout.
 
 ### M1: Reference fixtures and the model
 
@@ -108,7 +109,7 @@ Exit: a table of reference-scale results, or a written account of what blocks th
 
 ## Bringing in the spike
 
-The spike (`spike_gpt.cr`) is a 4-layer, 0.9 M-parameter model with the original's structure and a MuonAdamW built on tensomite 0.8's `updates` hook. On a toy task its loss fell from 5.545 to 0.0001, and accumulation matched a single batch. It proves the pieces run; it does not prove they match.
+The spike (`spike_gpt.cr`) is a 4-layer, 0.9 M-parameter model with the original's structure and a MuonAdamW built on tensomite 0.8's `updates` hook. On a toy task its loss fell from 5.545 to 0.0014 in 200 steps (its default), and accumulation matched a single batch at every printed step. It proves the pieces run; it does not prove they match.
 
 1. **Commit it as it is** to `spikes/gpt_spike.cr`, changing only `require "./src/tensomite"` to `require "tensomite"` (and the BLAS require likewise). That commit is the provenance; later commits change it.
 2. **Absorb it in pieces**, each at its milestone and checked by the fixtures: the model in M1, the optimizer in M2, the training-loop fragment (the accumulation path) in M4.
