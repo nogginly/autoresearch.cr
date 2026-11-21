@@ -11,11 +11,11 @@ FORMAT_PATHS := $(wildcard train.cr src spec tools)
 ## deps: install shards and build the linter, if missing
 deps: lib/.shards.info $(AMEBA)
 
-lib/.shards.info: shard.yml
+lib/.shards.info: shard.yml shard.lock
 	$(SHARDS) install
 	@touch $@
 
-$(AMEBA): lib/.shards.info
+$(AMEBA): | lib/.shards.info
 	mkdir -p bin
 	cp lib/ameba/bin/ameba.cr bin/
 	$(CRYSTAL) build -o $(AMEBA) bin/ameba.cr
