@@ -1,0 +1,10 @@
+version: 2.0
+shards:
+  ameba:
+    git: https://github.com/crystal-ameba/ameba.git
+    version: 1.7.0
+
+  tensomite:
+    git: https://github.com/nogginly/tensomite.cr.git
+    version: 0.8.0
+

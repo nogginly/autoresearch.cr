@@ -2,10 +2,7 @@ dependencies:
   brew:
     - crystal
   custom:
-    - |
-      if ! shards check >/dev/null 2>&1 || [ ! -x bin/ameba ]; then
-      	shards install && mkdir -p bin && cp lib/ameba/bin/ameba.cr bin && crystal build -o bin/ameba bin/ameba.cr;
-      fi
+    - make deps
 hooks:
   before:
     - mkdir -p bin spec src

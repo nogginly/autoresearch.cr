@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, crystal: "1.22.0" }
+          - { os: macos-latest, crystal: "1.22.0" }
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install OpenBLAS (Linux)
+        if: ${{ runner.os == 'Linux' }}
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+
+      - name: Install Crystal
+        uses: crystal-lang/install-crystal@v1
+        with:
+          crystal: ${{ matrix.crystal }}
+
+      # bin/ameba is compiled with the job's Crystal, so its version is part of the key.
+      - name: Cache shards and ameba
+        uses: actions/cache@v5
+        with:
+          path: |
+            lib
+            bin/ameba
+          key: ${{ runner.os }}-crystal-${{ matrix.crystal }}-shards-${{ hashFiles('shard.lock') }}
+
+      - name: Install shards and the linter
+        run: make deps
+
+      - name: Specs and lint
+        run: make test
+
+      - name: Build
+        run: make build
+
+      - name: Run the spike
+        env:
+          OPENBLAS_NUM_THREADS: "1"
+        run: bin/gpt_spike 20
