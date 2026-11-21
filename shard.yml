@@ -12,7 +12,7 @@ crystal: ">= 1.22.0"
 dependencies:
   tensomite:
     github: nogginly/tensomite.cr
-    version: ~> 0.7.1
+    version: ~> 0.8.0
 
 development_dependencies:
   ameba:
