@@ -1,0 +1,8 @@
+Globs:
+  - "**/*.cr"
+
+# `spikes/` holds code committed verbatim as provenance, and is deleted once absorbed.
+Excluded:
+  - lib
+  - bin
+  - spikes
