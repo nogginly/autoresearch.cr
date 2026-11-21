@@ -14,14 +14,14 @@ See [SCOPE.md](SCOPE.md) for the goal and [DESIGN.md](DESIGN.md) for how the pie
 
 ## Where the work is tracked
 
-Tensomite's issues #156 to #176 were written for this port. The ones that are library work (G-01 to G-09, D-01) stay there. The ones that are this repo's work (D-02 to D-05 and A-01 to A-06, tensomite#167 to #176, and the epic, #156) move here with GitHub's "Transfer issue", which keeps their comments and labels and redirects the old link, though they get new numbers here. New library gaps found along the way are opened in tensomite and linked from here.
+Tensomite's issues #156 to #176 were written for this port, and all of them stay in tensomite except A-01 to A-06 (tensomite#171 to #176), which are this repo's implementation steps and are being deleted there. The milestones below replace them, and each milestone's exit criteria carry the acceptance detail. The library issues (G-01 to G-09, D-01), the data-tool issues (D-02 to D-05) and the epic (#156) are kept, and M3 links to D-02 to D-05 rather than duplicating them. New library gaps found along the way are opened in tensomite and linked from here.
 
 | Here | Original key | Tensomite |
 |---|---|---|
 | M0 Foundation | | |
 | M1 Reference fixtures and the model | A-01, A-02 | |
 | M2 The optimizer | A-03 | G-02, G-03 (done in 0.8.0) |
-| M3 Data tools and the dataloader | D-02 to D-05 | D-01 (done in 0.8.0) |
+| M3 Data tools and the dataloader | | D-01 (done in 0.8.0), D-02 to D-05 (tracked in tensomite) |
 | M4 Training loop and metric | A-04, A-05 | G-05 (done), memory high-water mark (new) |
 | M5 The agent loop | A-06 | G-09 (done) |
 | M6 Reference scale | | G-01, G-07, G-08, fused cross-entropy (M14) |
