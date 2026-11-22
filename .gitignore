@@ -18,3 +18,4 @@ CLAUDE.md
 .spectator-failures
 
 /models/
+/scripts/fixtures/.cache/
