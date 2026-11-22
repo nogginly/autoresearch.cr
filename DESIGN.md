@@ -55,7 +55,7 @@ These come from reading `train.py` and `prepare.py`; each is a place a port can 
 | Area | Original | Note for the port |
 |---|---|---|
 | Sizes | `model_dim = ceil(depth × 64 / 128) × 128`; heads = `model_dim / 128` | At depth 8: width 512, 4 heads, 50.3 M parameters |
-| Attention | RoPE on q and k, then RMSNorm on q and k; window `S` is half the context, `L` full; the last layer is always `L` | Pattern `SSSL`; windowed as a mask until tensomite has fused attention |
+| Attention | RoPE on q and k, then RMSNorm on q and k; window `S` is half the context, `L` full; the last layer is always `L`; FlashAttention's window is inclusive, so `S` sees `T/2 + 1` keys | Pattern `SSSL`; windowed as a mask (`0 <= i - j <= window`) until tensomite has fused attention |
 | RoPE | `y1 = x1·cos + x2·sin`, `y2 = −x1·sin + x2·cos` | Tensomite rotates the other way; pass `−sin` |
 | Value embeddings | On alternating layers, the last always included; gate `2·sigmoid(W·x[:32])` per head | Gate weights start at zero (neutral) |
 | Residual scalars | `x = λ_resid[i]·x + λ_x0[i]·x0` | `λ_resid` starts at 1, `λ_x0` at 0.1 |
