@@ -12,6 +12,15 @@ OPTIMIZER_FIXTURES = "#{__DIR__}/fixtures/optimizer"
 # momentum schedule or the number of Newton–Schulz steps measured 0.11 to 0.92.
 UPDATE_PARITY = 1e-4
 
+# Cautious weight decay masks each element by the sign of `g × p`, a step
+# function. Where that product is within a rounding error of zero, as one
+# element of h.0's c_fc is at step 3 (1.2e-8), another device's last bit can
+# flip the mask and move the element by `lr × wd × p`. A Muon parameter's
+# update may therefore have up to this fraction of elements outside
+# `UPDATE_PARITY`, each by no more than the sum over the steps of
+# `lr × wd × max|p|`. Breaking the mask itself moves about half of them.
+MASK_FLIP_FRACTION = 1e-3
+
 def optimizer_meta : JSON::Any
   JSON.parse(File.read("#{OPTIMIZER_FIXTURES}/expected.json"))
 end
@@ -38,13 +47,48 @@ def run_steps(optimizer : MuonAdamW, model : GPT, values : Array(Tensor), from :
   values
 end
 
+# Returns the largest change a flip of the cautious mask can make to a Muon
+# parameter of PyTorch *shape*, whose largest magnitude is *max_param*, over
+# the first *after* fixture steps: the sum of `lr × wd × max|p|`.
+def mask_flip_bound(shape : Array(Int32), max_param : Float64, after : Int32) : Float64
+  rows, cols = shape[0], shape[1]
+  optimizer_meta["steps"].as_a.first(after).sum do |step|
+    lr = MATRIX_LR * step["lr_multiplier"].as_f * Math.max(1.0, rows / cols) ** 0.5
+    lr * step["muon_weight_decay"].as_f * max_param
+  end
+end
+
 def expect_updates(model : GPT, values : Array(Tensor), after : Int32) : Nil
   tensors = optimizer_tensors
+  muon = model.named_params.keys.select(&.starts_with?("transformer.h."))
   model.named_params.keys.each_with_index do |name, i|
-    initial = tensors["initial.#{name}"].to_a(Float32)
+    initial_tensor = tensors["initial.#{name}"]
+    initial = initial_tensor.to_a(Float32)
     ours = other_layout(name, values[i]).to_a(Float32).zip(initial).map { |(a, b)| a - b }
     theirs = tensors["after#{after}.#{name}"].to_a(Float32).zip(initial).map { |(a, b)| a - b }
-    expect_close_to_scale(ours, theirs, UPDATE_PARITY, "update of #{name} after #{after}")
+    label = "update of #{name} after #{after}"
+    if muon.includes?(name)
+      bound = mask_flip_bound(initial_tensor.shape, initial.max_of(&.abs).to_f64, after)
+      expect_close_allowing_flips(ours, theirs, UPDATE_PARITY, MASK_FLIP_FRACTION, bound, label)
+    else
+      expect_close_to_scale(ours, theirs, UPDATE_PARITY, label)
+    end
+  end
+end
+
+# Checks *actual* against *expected* as `expect_close_to_scale` does, except
+# that up to *fraction* of the elements may differ by as much as *flip_bound*.
+def expect_close_allowing_flips(actual : Array(Float32), expected : Array(Float32), relative : Float64,
+                                fraction : Float64, flip_bound : Float64, label : String) : Nil
+  actual.size.should eq expected.size
+  limit = relative * expected.max_of(&.abs).to_f64
+  outliers = actual.zip(expected).each_with_index.select { |(a, e), _| (a - e).abs > limit }.to_a
+  allowed = Math.max(1, (fraction * actual.size).to_i)
+  if outliers.size > allowed
+    fail "#{label}: #{outliers.size} of #{actual.size} elements differ by more than #{limit}; at most #{allowed} may"
+  end
+  outliers.each do |(a, e), index|
+    fail "#{label}: element #{index} is #{a}, expected #{e}; more than a mask flip (#{flip_bound})" if (a - e).abs > flip_bound + limit
   end
 end
 
