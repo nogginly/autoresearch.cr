@@ -16,6 +16,10 @@ See [SCOPE.md](SCOPE.md) for the goal and [DESIGN.md](DESIGN.md) for how the pie
 
 Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensomite#171 to #176) and the data-tool issues D-02 to D-05 are this repo's work: the A issues were deleted there and the D issues closed as won't-fix. The milestones below replace them, and each milestone's exit criteria carry the acceptance detail. The library issues (G-01 to G-09, D-01) and the epic (#156) stay in tensomite. New library gaps found along the way are opened in tensomite and linked from here.
 
+| Gap | Found in | Tensomite | Here meanwhile |
+|---|---|---|---|
+| A `Module` silently ignores children held in a `Hash`, so a keyed collection such as `train.py`'s `value_embeds` cannot be expressed | M1 | [#188](https://github.com/nogginly/tensomite.cr/issues/188) | `value_embeds` is an `Array` in layer order; the fixture script maps the names |
+
 | Here | Original key | Tensomite |
 |---|---|---|
 | M0 Foundation (done, #1) | | |
@@ -121,6 +125,11 @@ The spike's synthetic data, device constant, hard-coded sizes and hyperparameter
 - `-sin` is passed to `rope`, as the spike does, with a comment saying why.
 - Muon works on `[out, in]` copies of tensomite's `[in, out]` weights; the original's tall-or-wide choice, NorMuon axis and learning-rate scale depend on it.
 - The RMSNorm epsilon is the original's (`Float32::EPSILON`), a named constant.
+- The sliding window is inclusive, as FlashAttention's is: query `i` sees key `j` when `0 <= i - j <= window`. The spike's mask used `i - j < window`, one key short on every `S` layer; the M1 fixture fails on it.
+
+## The original, pinned
+
+The port follows [`karpathy/autoresearch`](https://github.com/karpathy/autoresearch) at commit `228791fb499afffb54b46200aca536f79142f117` (25 March 2026; `train.py` last changed in `ebf3578`). The fixture scripts fetch that commit and check the SHA-256 of `train.py` and `prepare.py`. Moving to a later commit is a deliberate change: update the pin, regenerate the fixtures, and port whatever changed.
 
 ## Decisions
 
@@ -128,7 +137,7 @@ Lettered as in tensomite; each is recorded here when made.
 
 - **A. This repo is the application; tensomite stays the library.** Settled. Gaps go upstream.
 - **B. One editable file, one fixed harness.** `train.cr` mirrors `train.py`; `src/autoresearch/` mirrors `prepare.py`. Settled.
-- **C. Specs load `train.cr` through a compile flag.** The file ends with `main` guarded by `{% unless flag?(:autoresearch_spec) %}`, so specs can require its model and optimizer without running it. The alternative, splitting model and optimizer into files the agent also edits, breaks the one-file contract. Recommended; to confirm.
+- **C. Specs load `train.cr` through a compile flag.** Settled at M1. The file ends with `main` guarded by `{% unless flag?(:autoresearch_spec) %}`, so specs can require its model and optimizer without running it; `make spec` passes the flag and `spec_helper.cr` refuses to compile without it, so a bare `crystal spec` cannot start a run. Splitting model and optimizer into files the agent also edits would break the one-file contract; a run-time guard (an environment variable) would start training when forgotten.
 - **D. Data preparation is a tool, and training reads token shards.** Settled (tensomite's Decision 1). Parquet and the BPE trainer stay out of the training binary and its compile time.
 - **E. Where Muon lives.** Open. Recommended: the library carries a generic `Muon` and its Newton–Schulz function; this repo's `train.cr` carries the recipe's `MuonAdamW` (NorMuon, cautious decay, schedules), which the agent edits. The spike's Muon took about 90 lines on the existing hook, so either is cheap.
 - **F. Python only for fixtures.** Settled. Fixtures are committed, so CI needs no Python.

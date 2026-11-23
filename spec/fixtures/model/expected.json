@@ -1,0 +1,88 @@
+{
+  "source": "https://github.com/karpathy/autoresearch",
+  "commit": "228791fb499afffb54b46200aca536f79142f117",
+  "torch": "2.9.1+cu128",
+  "seed": 42,
+  "batch": 2,
+  "tiny": {
+    "sequence_len": 16,
+    "vocab_size": 128,
+    "n_layer": 4,
+    "n_head": 2,
+    "n_kv_head": 2,
+    "n_embd": 64,
+    "window_pattern": "SLS"
+  },
+  "window_sizes": [
+    8,
+    16,
+    8,
+    16
+  ],
+  "value_embed_layers": [
+    1,
+    3
+  ],
+  "substitutions": [
+    "FlashAttention 3 needs a Hopper GPU; scaled_dot_product_attention with the same causal sliding-window mask (key j visible from query i when 0 <= i - j <= window) computes the same function",
+    "rotary tables stay float32 (Decision G: F32 until tensomite computes in BF16)",
+    "embeddings stay float32 (Decision G)",
+    "No torch.autocast: every operation runs in float32 on the CPU.",
+    "Weights that train.py initialises to zero (c_proj, mlp.c_proj, ve_gate) are drawn from uniform(-s/2, s/2), lm_head is drawn from normal(0, 1) so that logits reach the softcap's non-linear range, and resid_lambdas and x0_lambdas get per-layer noise, so that every gradient and every per-layer scalar is exercised."
+  ],
+  "names": {
+    "resid_lambdas": "resid_lambdas",
+    "x0_lambdas": "x0_lambdas",
+    "transformer.wte.weight": "wte.weight",
+    "transformer.h.0.attn.c_q.weight": "h.0.attn.c_q.weight",
+    "transformer.h.0.attn.c_k.weight": "h.0.attn.c_k.weight",
+    "transformer.h.0.attn.c_v.weight": "h.0.attn.c_v.weight",
+    "transformer.h.0.attn.c_proj.weight": "h.0.attn.c_proj.weight",
+    "transformer.h.0.mlp.c_fc.weight": "h.0.mlp.c_fc.weight",
+    "transformer.h.0.mlp.c_proj.weight": "h.0.mlp.c_proj.weight",
+    "transformer.h.1.attn.c_q.weight": "h.1.attn.c_q.weight",
+    "transformer.h.1.attn.c_k.weight": "h.1.attn.c_k.weight",
+    "transformer.h.1.attn.c_v.weight": "h.1.attn.c_v.weight",
+    "transformer.h.1.attn.c_proj.weight": "h.1.attn.c_proj.weight",
+    "transformer.h.1.attn.ve_gate.weight": "h.1.attn.ve_gate.weight",
+    "transformer.h.1.mlp.c_fc.weight": "h.1.mlp.c_fc.weight",
+    "transformer.h.1.mlp.c_proj.weight": "h.1.mlp.c_proj.weight",
+    "transformer.h.2.attn.c_q.weight": "h.2.attn.c_q.weight",
+    "transformer.h.2.attn.c_k.weight": "h.2.attn.c_k.weight",
+    "transformer.h.2.attn.c_v.weight": "h.2.attn.c_v.weight",
+    "transformer.h.2.attn.c_proj.weight": "h.2.attn.c_proj.weight",
+    "transformer.h.2.mlp.c_fc.weight": "h.2.mlp.c_fc.weight",
+    "transformer.h.2.mlp.c_proj.weight": "h.2.mlp.c_proj.weight",
+    "transformer.h.3.attn.c_q.weight": "h.3.attn.c_q.weight",
+    "transformer.h.3.attn.c_k.weight": "h.3.attn.c_k.weight",
+    "transformer.h.3.attn.c_v.weight": "h.3.attn.c_v.weight",
+    "transformer.h.3.attn.c_proj.weight": "h.3.attn.c_proj.weight",
+    "transformer.h.3.attn.ve_gate.weight": "h.3.attn.ve_gate.weight",
+    "transformer.h.3.mlp.c_fc.weight": "h.3.mlp.c_fc.weight",
+    "transformer.h.3.mlp.c_proj.weight": "h.3.mlp.c_proj.weight",
+    "lm_head.weight": "lm_head.weight",
+    "value_embeds.1.weight": "value_embeds.0.weight",
+    "value_embeds.3.weight": "value_embeds.1.weight"
+  },
+  "depth8": {
+    "config": {
+      "sequence_len": 2048,
+      "vocab_size": 8192,
+      "n_layer": 8,
+      "n_head": 4,
+      "n_kv_head": 4,
+      "n_embd": 512,
+      "window_pattern": "SSSL"
+    },
+    "num_scaling_params": {
+      "wte": 4194304,
+      "value_embeds": 16777216,
+      "lm_head": 4194304,
+      "transformer_matrices": 25166336,
+      "scalars": 16,
+      "total": 50332176
+    },
+    "estimate_flops": 239078400
+  },
+  "loss": 14.912899017333984
+}
