@@ -79,7 +79,13 @@ Exit: loss and gradients match within the documented tolerance on CPU/BLAS, on C
 
 Exit: updated parameters match the fixtures within tolerance; the optimizer step costs under a few percent of a training step at depth 8 (measured, recorded); Decision E recorded.
 
-Measured (`make bench`, a 2^19-token step scaled from one micro-batch): on BLAS, 4-core container, 3.5 s against 1,193 s, 0.29%. GB10 and M5 Pro: see the M2 PR.
+Measured (`make bench`, a 2^19-token step scaled from one micro-batch of `MAX_SEQ_LEN` tokens per sequence):
+
+| Device | Micro-batch | Forward and backward | Training step (2^19) | Optimizer step | Share |
+|---|---|---|---|---|---|
+| BLAS, 4-core Linux container | 1 × 2048 | 4.66 s | 1,193 s | 3.50 s | 0.29% |
+| Metal, M5 Pro | 8 × 2048 | 22.6 s | 723 s | 0.192 s | 0.026% |
+| CUDA, GB10 | 8 × 2048 | 25.7 s | 823 s | 0.109 s | 0.013% |
 
 ### M3: Data tools and the dataloader
 
