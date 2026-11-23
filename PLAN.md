@@ -19,6 +19,7 @@ Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensom
 | Gap | Found in | Tensomite | Here meanwhile |
 |---|---|---|---|
 | A `Module` silently ignores children held in a `Hash`, so a keyed collection such as `train.py`'s `value_embeds` cannot be expressed | M1 | [#188](https://github.com/nogginly/tensomite.cr/issues/188), fixed in 0.8.1 | none: `value_embeds` is a `Hash` keyed by layer, and every parameter has `train.py`'s name |
+| Listing a child module's parameters (`child.params`) renames the shared `Parameter`s relative to that child, until the root lists them again | M2 | to report | `GPT` selects parameters by name prefix from the root (`params_named`) |
 
 | Here | Original key | Tensomite |
 |---|---|---|
@@ -77,6 +78,8 @@ Exit: loss and gradients match within the documented tolerance on CPU/BLAS, on C
 4. Decide where Muon lives (Decision E: in `train.cr`).
 
 Exit: updated parameters match the fixtures within tolerance; the optimizer step costs under a few percent of a training step at depth 8 (measured, recorded); Decision E recorded.
+
+Measured (`make bench`, a 2^19-token step scaled from one micro-batch): on BLAS, 4-core container, 3.5 s against 1,193 s, 0.29%. GB10 and M5 Pro: see the M2 PR.
 
 ### M3: Data tools and the dataloader
 
