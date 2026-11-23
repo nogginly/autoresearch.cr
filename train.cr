@@ -148,30 +148,42 @@ class Block < Tensomite::Module
   end
 end
 
+# The token embedding and the blocks, grouped as in train.py so that parameter names match.
+class Transformer < Tensomite::Module
+  getter wte : Embedding
+  getter h : Array(Block)
+
+  def initialize(config : GPTConfig, build : Builder)
+    @wte = build.embedding(config.vocab_size, config.n_embd)
+    @h = Array(Block).new(config.n_layer) { |i| Block.new(config, i, build) }
+  end
+end
+
 # The model of `train.py`. Built with placeholder weights, which take no memory:
 # call `#init_weights` to train from scratch, or `Module#load` to load a checkpoint.
 class GPT < Tensomite::Module
   getter config : GPTConfig
   getter window_sizes : Array(Int32)
-  @wte : Embedding
-  @h : Array(Block)
+  @transformer : Transformer
   @lm_head : Linear
   @resid_lambdas : Parameter
   @x0_lambdas : Parameter
-  @value_embeds : Array(Embedding)
+  @value_embeds : Hash(String, Embedding)
 
   def initialize(@config : GPTConfig, @device : Device)
     build = Builder.new(device: device, init: Init.placeholder)
     @window_sizes = compute_window_sizes(config)
-    @wte = build.embedding(config.vocab_size, config.n_embd)
-    @h = Array(Block).new(config.n_layer) { |i| Block.new(config, i, build) }
+    @transformer = Transformer.new(config, build)
     @lm_head = build.linear(config.n_embd, config.vocab_size, bias: false)
     @resid_lambdas = build.parameter([config.n_layer], decay: false)
     @x0_lambdas = build.parameter([config.n_layer], decay: false)
-    # Value embeddings, one per layer that has one, in layer order.
+    # Value embeddings, keyed by the layer that has one.
     head_dim = config.n_embd // config.n_head
     kv_dim = config.n_kv_head * head_dim
-    @value_embeds = (0...config.n_layer).select { |i| has_ve(i, config.n_layer) }.map { build.embedding(config.vocab_size, kv_dim) }
+    @value_embeds = {} of String => Embedding
+    (0...config.n_layer).each do |i|
+      @value_embeds[i.to_s] = build.embedding(config.vocab_size, kv_dim) if has_ve(i, config.n_layer)
+    end
     # Rotary embeddings. Tensomite rotates as `x·cos + rotate_half(x)·sin`; train.py
     # as `x·cos − rotate_half(x)·sin`, so `#forward` passes `−sin`.
     @rope = RotaryEmbedding.new(head_dim, context: config.sequence_len * 10, device: device)
@@ -183,15 +195,15 @@ class GPT < Tensomite::Module
   # output projections and value-embedding gates zero, `resid_lambdas` 1 and `x0_lambdas` 0.1.
   def init_weights(rng : Random) : Nil
     s = Math.sqrt(3.0) / Math.sqrt(config.n_embd.to_f)
-    fill(@wte.weight, Init.normal(1.0), rng)
+    fill(@transformer.wte.weight, Init.normal(1.0), rng)
     fill(@lm_head.weight, Init.normal(0.001), rng)
-    @h.each do |block|
+    @transformer.h.each do |block|
       block.attn.init_weights(s, rng)
       block.mlp.init_weights(s, rng)
     end
     fill(@resid_lambdas, Init.constant(1.0), rng)
     fill(@x0_lambdas, Init.constant(0.1), rng)
-    @value_embeds.each { |embedding| fill(embedding.weight, Init.uniform(s), rng) }
+    @value_embeds.each_value { |embedding| fill(embedding.weight, Init.uniform(s), rng) }
   end
 
   # Returns each layer's attention window: half the context for `S`, all of it
@@ -209,7 +221,7 @@ class GPT < Tensomite::Module
   # Returns the estimated FLOPs per token, forward and backward, as train.py counts them.
   def estimate_flops : Int64
     nparams = count(params)
-    nparams_exclude = count(@wte.params + @value_embeds.flat_map(&.params) + [@resid_lambdas, @x0_lambdas])
+    nparams_exclude = count(@transformer.wte.params + @value_embeds.values.flat_map(&.params) + [@resid_lambdas, @x0_lambdas])
     h = config.n_head.to_i64
     q = (config.n_embd // config.n_head).to_i64
     t = config.sequence_len
@@ -220,10 +232,10 @@ class GPT < Tensomite::Module
   # Returns the parameter counts by group, as train.py's `num_scaling_params`.
   def num_scaling_params : Hash(String, Int64)
     counts = {
-      "wte"                  => count(@wte.params),
-      "value_embeds"         => count(@value_embeds.flat_map(&.params)),
+      "wte"                  => count(@transformer.wte.params),
+      "value_embeds"         => count(@value_embeds.values.flat_map(&.params)),
       "lm_head"              => count(@lm_head.params),
-      "transformer_matrices" => count(@h.flat_map(&.params)),
+      "transformer_matrices" => count(@transformer.h.flat_map(&.params)),
       "scalars"              => count([@resid_lambdas, @x0_lambdas]),
     }
     counts["total"] = counts.values.sum
@@ -238,16 +250,11 @@ class GPT < Tensomite::Module
     cos, sin = @rope.angles((0...t).to_a)
     cos_sin = {cos.reshape([1, t, 1, cos.shape[-1]]), (sin * -1.0).reshape([1, t, 1, sin.shape[-1]])}
 
-    x = norm(@wte.call(ids))
+    x = norm(@transformer.wte.call(ids))
     x0 = x
-    ve_index = 0
-    @h.each_with_index do |block, i|
+    @transformer.h.each_with_index do |block, i|
       x = x * @resid_lambdas.value.slice(0, i, i + 1) + x0 * @x0_lambdas.value.slice(0, i, i + 1)
-      ve = nil
-      if has_ve(i, config.n_layer)
-        ve = @value_embeds[ve_index].call(ids)
-        ve_index += 1
-      end
+      ve = @value_embeds[i.to_s]?.try(&.call(ids))
       x = block.call(x, ve, cos_sin, mask(t, window_sizes[i]), b, t)
     end
     x = norm(x)

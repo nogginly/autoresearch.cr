@@ -73,7 +73,7 @@ describe "M1 exit: the model matches train.py" do
   end
 
   it "has the same parameters, by name, as the fixture" do
-    names = model_meta["names"].as_h.values.map(&.as_s).sort!
+    names = model_meta["names"].as_a.map(&.as_s).sort!
     GPT.new(tiny_config, DEVICE).named_params.keys.sort!.should eq names
   end
 
@@ -107,11 +107,11 @@ describe GPT do
     params = model.named_params
     params["resid_lambdas"].value.to_a(Float32).should eq [1f32] * 4
     params["x0_lambdas"].value.to_a(Float32).should eq [0.1f32] * 4
-    {"h.0.attn.c_proj.weight", "h.0.mlp.c_proj.weight", "h.3.attn.ve_gate.weight"}.each do |name|
+    {"transformer.h.0.attn.c_proj.weight", "transformer.h.0.mlp.c_proj.weight", "transformer.h.3.attn.ve_gate.weight"}.each do |name|
       params[name].value.to_a(Float32).all?(&.zero?).should be_true
     end
     # Uniform ±√3/√64 ≈ ±0.2165
-    params["h.0.attn.c_q.weight"].value.to_a(Float32).max_of(&.abs).should be <= Math.sqrt(3.0) / 8
+    params["transformer.h.0.attn.c_q.weight"].value.to_a(Float32).max_of(&.abs).should be <= Math.sqrt(3.0) / 8
   end
 
   it "rejects grouped-query attention, which is not ported" do

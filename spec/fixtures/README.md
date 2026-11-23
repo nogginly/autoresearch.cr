@@ -26,9 +26,9 @@ The tiny model: 4 layers, width 64, 2 heads, vocabulary 128, sequence 16, batch 
 
 | File | Contents |
 |---|---|
-| `weights.safetensors` | every parameter, named as in `train.cr`, in PyTorch's layout (`Linear` weights `[out, in]`) |
+| `weights.safetensors` | every parameter, named as in `train.py` and `train.cr`, in PyTorch's layout (`Linear` weights `[out, in]`) |
 | `inputs.safetensors` | `idx` and `targets`, `I32` `[2, 16]`; `targets[0, 3]` is -1, which the loss ignores |
 | `expected.safetensors` | `logits` `[32, 128]`, `loss` `[1]`, `per_token_loss` `[32]`, and `grad.<name>` for every parameter, in PyTorch's layout |
-| `expected.json` | provenance, the tiny config, the window sizes, the substitutions, the name map, and `num_scaling_params` and `estimate_flops` at depth 8 |
+| `expected.json` | provenance, the tiny config, the window sizes, the substitutions, the parameter names, and `num_scaling_params` and `estimate_flops` at depth 8 |
 
-**Names.** `train.py` keys value embeddings by layer (`value_embeds.1`, `value_embeds.3`); `train.cr` keeps them in a list in layer order (`value_embeds.0`, `value_embeds.1`), because a tensomite `Module` cannot hold a keyed collection ([tensomite#188](https://github.com/nogginly/tensomite.cr/issues/188)). `train.py`'s `transformer.` prefix is dropped. `names` in `expected.json` maps each original name to the port's.
+**Names.** Every parameter has `train.py`'s name, such as `transformer.h.0.attn.c_q.weight` and `value_embeds.1.weight`, which `train.cr` shares; `names` in `expected.json` lists them.

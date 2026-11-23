@@ -6,12 +6,12 @@ The model code is train.py's own, read from AUTORESEARCH_DIR at the pinned
 commit and run on the CPU in float32, with only the substitutions in PATCHES.
 Writes to OUT_DIR:
 
-  weights.safetensors   the tiny model's parameters, named as in train.cr,
-                        in PyTorch's layout (Linear weights [out, in])
+  weights.safetensors   the tiny model's parameters, named as in train.py and
+                        train.cr, in PyTorch's layout (Linear weights [out, in])
   inputs.safetensors    idx and targets, I32 [B, T]; one target is -1 (ignored)
   expected.safetensors  logits [B*T, V], loss [1], per_token_loss [B*T], and
                         grad.<name> for every parameter, in PyTorch's layout
-  expected.json         provenance, the tiny config, and parameter counts and
+  expected.json         provenance, the tiny config, parameter names, and parameter counts and
                         FLOPs per token at depth 8
 """
 
@@ -124,12 +124,6 @@ def load_original(source_dir):
     return namespace, build_namespace["build_model_config"]
 
 
-def port_name(name):
-    """Maps a train.py parameter name to train.cr's."""
-    name = re.sub(r"^transformer\.", "", name)
-    return name
-
-
 def main():
     source_dir, out_dir = sys.argv[1], sys.argv[2]
     os.makedirs(out_dir, exist_ok=True)
@@ -154,14 +148,7 @@ def main():
         model.resid_lambdas.add_(0.1 * torch.randn(config.n_layer))
         model.x0_lambdas.add_(0.05 * torch.randn(config.n_layer))
 
-    # 2. Value embeddings are keyed by layer in train.py and listed in layer order in train.cr.
-    ve_layers = sorted(int(key) for key in model.value_embeds.keys())
-    names = {}
-    for name, _ in model.named_parameters():
-        m = re.match(r"^value_embeds\.(\d+)\.weight$", name)
-        names[name] = f"value_embeds.{ve_layers.index(int(m.group(1)))}.weight" if m else port_name(name)
-
-    # 3. One batch, the loss, the per-token losses and the gradients.
+    # 2. One batch, the loss, the per-token losses and the gradients.
     idx = torch.randint(0, config.vocab_size, (BATCH, config.sequence_len))
     targets = torch.randint(0, config.vocab_size, (BATCH, config.sequence_len))
     targets[0, 3] = -1
@@ -170,18 +157,18 @@ def main():
     loss = model(idx, targets)
     loss.backward()
 
-    weights = {names[n]: p.detach().contiguous() for n, p in model.named_parameters()}
+    weights = {n: p.detach().contiguous() for n, p in model.named_parameters()}
     expected = {
         "logits": logits.detach().reshape(-1, config.vocab_size).contiguous(),
         "loss": loss.detach().reshape(1),
         "per_token_loss": per_token.detach().reshape(-1).contiguous(),
     }
-    expected.update({f"grad.{names[n]}": p.grad.contiguous() for n, p in model.named_parameters()})
+    expected.update({f"grad.{n}": p.grad.contiguous() for n, p in model.named_parameters()})
     save_file(weights, os.path.join(out_dir, "weights.safetensors"))
     save_file({"idx": idx.to(torch.int32), "targets": targets.to(torch.int32)}, os.path.join(out_dir, "inputs.safetensors"))
     save_file(expected, os.path.join(out_dir, "expected.safetensors"))
 
-    # 4. Counts and FLOPs at depth 8, on the meta device so nothing is allocated.
+    # 3. Counts and FLOPs at depth 8, on the meta device so nothing is allocated.
     with torch.device("meta"):
         reference = GPT(build_model_config(8))
     meta = dict(
@@ -192,9 +179,9 @@ def main():
         batch=BATCH,
         tiny=asdict(config),
         window_sizes=[w[0] for w in model.window_sizes],
-        value_embed_layers=ve_layers,
+        value_embed_layers=sorted(int(key) for key in model.value_embeds.keys()),
         substitutions=[reason for _, _, reason in PATCHES] + OTHER_SUBSTITUTIONS,
-        names={original: names[original] for original in names},
+        names=[name for name, _ in model.named_parameters()],
         depth8=dict(
             config=asdict(reference.config),
             num_scaling_params=reference.num_scaling_params(),
