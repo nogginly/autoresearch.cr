@@ -16,6 +16,10 @@ See [SCOPE.md](SCOPE.md) for the goal and [DESIGN.md](DESIGN.md) for how the pie
 
 Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensomite#171 to #176) and the data-tool issues D-02 to D-05 are this repo's work: the A issues were deleted there and the D issues closed as won't-fix. The milestones below replace them, and each milestone's exit criteria carry the acceptance detail. The library issues (G-01 to G-09, D-01) and the epic (#156) stay in tensomite. New library gaps found along the way are opened in tensomite and linked from here.
 
+| Gap | Found in | Tensomite | Here meanwhile |
+|---|---|---|---|
+| A `Module` silently ignores children held in a `Hash`, so a keyed collection such as `train.py`'s `value_embeds` cannot be expressed | M1 | [#88](https://github.com/nogginly/tensomite.cr/issues/88) | `value_embeds` is an `Array` in layer order; the fixture script maps the names |
+
 | Here | Original key | Tensomite |
 |---|---|---|
 | M0 Foundation (done, #1) | | |
