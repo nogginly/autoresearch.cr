@@ -25,4 +25,4 @@ fi
 "$VENV/bin/pip" install -q -r "$ROOT/scripts/fixtures/requirements.txt"
 
 # 3. Write the fixtures.
-"$VENV/bin/python" -I "$ROOT/scripts/fixtures/make_model_fixtures.py" "$SOURCE" "$ROOT/spec/fixtures/model"
+"$VENV/bin/python" -I "$ROOT/scripts/fixtures/make_fixtures.py" "$SOURCE" "$ROOT/spec/fixtures"

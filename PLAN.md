@@ -18,7 +18,8 @@ Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensom
 
 | Gap | Found in | Tensomite | Here meanwhile |
 |---|---|---|---|
-| A `Module` silently ignores children held in a `Hash`, so a keyed collection such as `train.py`'s `value_embeds` cannot be expressed | M1 | [#188](https://github.com/nogginly/tensomite.cr/issues/188) | `value_embeds` is an `Array` in layer order; the fixture script maps the names |
+| A `Module` silently ignores children held in a `Hash`, so a keyed collection such as `train.py`'s `value_embeds` cannot be expressed | M1 | [#188](https://github.com/nogginly/tensomite.cr/issues/188), fixed in 0.8.1 | none: `value_embeds` is a `Hash` keyed by layer, and every parameter has `train.py`'s name |
+| Listing a child module's parameters (`child.params`) renames the shared `Parameter`s relative to that child, until the root lists them again | M2 | to report | `GPT` selects parameters by name prefix from the root (`params_named`) |
 
 | Here | Original key | Tensomite |
 |---|---|---|
@@ -74,9 +75,17 @@ Exit: loss and gradients match within the documented tolerance on CPU/BLAS, on C
 1. `MuonAdamW` in `train.cr`, from the spike, with the original's per-group settings and its schedules (learning-rate multiplier, momentum warm-up, weight-decay decay).
 2. Fixtures: parameters after 1 and 5 steps from fixed gradients, with the schedule values used.
 3. `state` and `restore` round-trip, so a run can resume.
-4. Decide where Muon lives (Decision E).
+4. Decide where Muon lives (Decision E: in `train.cr`).
 
 Exit: updated parameters match the fixtures within tolerance; the optimizer step costs under a few percent of a training step at depth 8 (measured, recorded); Decision E recorded.
+
+Measured (`make bench`, a 2^19-token step scaled from one micro-batch of `MAX_SEQ_LEN` tokens per sequence):
+
+| Device | Micro-batch | Forward and backward | Training step (2^19) | Optimizer step | Share |
+|---|---|---|---|---|---|
+| BLAS, 4-core Linux container | 1 × 2048 | 4.66 s | 1,193 s | 3.50 s | 0.29% |
+| Metal, M5 Pro | 8 × 2048 | 22.6 s | 723 s | 0.192 s | 0.026% |
+| CUDA, GB10 | 8 × 2048 | 25.7 s | 823 s | 0.109 s | 0.013% |
 
 ### M3: Data tools and the dataloader
 
@@ -139,7 +148,7 @@ Lettered as in tensomite; each is recorded here when made.
 - **B. One editable file, one fixed harness.** `train.cr` mirrors `train.py`; `src/autoresearch/` mirrors `prepare.py`. Settled.
 - **C. Specs load `train.cr` through a compile flag.** Settled at M1. The file ends with `main` guarded by `{% unless flag?(:autoresearch_spec) %}`, so specs can require its model and optimizer without running it; `make spec` passes the flag and `spec_helper.cr` refuses to compile without it, so a bare `crystal spec` cannot start a run. Splitting model and optimizer into files the agent also edits would break the one-file contract; a run-time guard (an environment variable) would start training when forgotten.
 - **D. Data preparation is a tool, and training reads token shards.** Settled (tensomite's Decision 1). Parquet and the BPE trainer stay out of the training binary and its compile time.
-- **E. Where Muon lives.** Open. Recommended: the library carries a generic `Muon` and its Newton–Schulz function; this repo's `train.cr` carries the recipe's `MuonAdamW` (NorMuon, cautious decay, schedules), which the agent edits. The spike's Muon took about 90 lines on the existing hook, so either is cheap.
+- **E. Where Muon lives.** Settled at M2: all of `MuonAdamW`, Newton–Schulz and its coefficients included, is in `train.cr`, as it is in `train.py`, so the agent can edit every part of it and the port needs nothing upstream. **Pending:** once M2 is done, revisit offering a generic `Muon` in tensomite for other projects; the port would not have to depend on it.
 - **F. Python only for fixtures.** Settled. Fixtures are committed, so CI needs no Python.
 - **G. `F32` until tensomite has BF16 compute.** Settled. Fixtures are made in `F32` with the original's BF16 casts removed.
 - **H. Profiles.** Open. A `reference` profile (depth 8, sequence 2,048, vocabulary 8,192) and a scaled-down one chosen at M4 (candidates: the same data with sequence 512 and depth 4; or a smaller dataset). A profile is a compile-time flag that picks a constants set, with its own cache directory.
@@ -155,4 +164,4 @@ Lettered as in tensomite; each is recorded here when made.
 | Crystal rebuilds add to every experiment | Fewer cycles overnight | Tensomite's measurement says acceptable; keep `train.cr` free of heavy macros; `--release` for runs |
 | Agent unfamiliar with tensomite's API | Wasted cycles on compile errors | Cheat-sheet in `program.md`; the M5 write-up feeds it |
 | Upstream M14 slips | M6 blocked | M6 is a stretch; M0 to M5 deliver the project |
-| Tensomite is young and one-maintainer | API churn | Pin `~> 0.8.0`; upgrade deliberately |
+| Tensomite is young and one-maintainer | API churn | Pin `~> 0.8.1`; upgrade deliberately |

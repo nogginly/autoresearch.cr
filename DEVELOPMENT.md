@@ -30,6 +30,7 @@ How to build, test and change this app. For how it works, see [DESIGN.md](DESIGN
 | Everything before a PR | `make test` (specs, then lint) |
 | Remove built programs | `make clean` |
 | Regenerate the fixtures | `make fixtures` |
+| Time the optimizer against a training step | `make bench` (`DEVICE=`, `BATCH=`) |
 
 ```mermaid
 flowchart LR
@@ -76,6 +77,26 @@ A device is where tensomite stores tensors and runs kernels. Tensomite is `F32`-
 
 **High system time is OpenBLAS, not the collector.** OpenBLAS's worker threads busy-wait between calls, so `time` reports several times the wall time as `user` and `sys`. `OPENBLAS_NUM_THREADS=1` removes it, at little cost for models this small.
 
+## Benchmarks
+
+`bench/optimizer_step.cr` times one `MuonAdamW` step on the depth-8 model against a training step of `train.py`'s 2^19 tokens. It times forward and backward on one micro-batch and scales that to 2^19 tokens, since a full step is too slow to time on the host.
+
+```bash
+make bench
+```
+
+`DEVICE` picks `blas` (the default), `metal` or `cuda`; `BATCH` sets the micro-batch's sequences (default 1). For example, on the GB10:
+
+```bash
+make bench CUDA=1 DEVICE=cuda BATCH=8
+```
+
+On the M5 Pro:
+
+```bash
+make bench DEVICE=metal BATCH=8
+```
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request, on Linux (OpenBLAS) and macOS (Accelerate), with Crystal pinned to the minimum in `shard.yml`. Each job runs `make deps`, `make test` and `make build`, then trains the spike for 20 steps as a smoke test. `lib/` and `bin/ameba` are cached, keyed on the OS, the Crystal version and `shard.lock`.
@@ -88,7 +109,7 @@ Parity specs compare `train.cr` with outputs of the PyTorch original, committed 
 make fixtures
 ```
 
-It needs Python 3 (3.13 is used; PyTorch must publish wheels for it) and the network. `scripts/fixtures/regenerate.sh` fetches `karpathy/autoresearch` at the pinned commit and creates a virtual environment from `scripts/fixtures/requirements.txt`, both under `scripts/fixtures/.cache/` (git-ignored), then runs `make_model_fixtures.py`. The first run takes a few minutes, mostly downloading PyTorch; the output is byte-identical between runs, so `git status` after it should show no change.
+It needs Python 3 (3.13 is used; PyTorch must publish wheels for it) and the network. `scripts/fixtures/regenerate.sh` fetches `karpathy/autoresearch` at the pinned commit and creates a virtual environment from `scripts/fixtures/requirements.txt`, both under `scripts/fixtures/.cache/` (git-ignored), then runs `make_fixtures.py`. The first run takes a few minutes, mostly downloading PyTorch; the output is byte-identical between runs, so `git status` after it should show no change.
 
 To change dependencies, edit `shard.yml`, run `shards update` (or `shards install` for a new shard), and commit both files. `shard.lock` is committed so every machine, CI included, builds against the same versions.
 
@@ -121,7 +142,8 @@ ops.yml                  optional ops actions, each a make call
 spec/spec_helper.cr      requires train.cr and the devices; DEVICE, GPUS, MODEL_DEVICES, comparison helpers
 spec/*_spec.cr           specs; each milestone's exit has a `describe "Mn exit: …"` block
 spec/fixtures/           committed reference outputs, and their README
-scripts/fixtures/        regenerate.sh, the fixture scripts and their pinned requirements (the only Python)
+scripts/fixtures/        regenerate.sh, make_fixtures.py and its pinned requirements (the only Python)
+bench/                   benchmarks, run in release mode with `make bench`
 spikes/gpt_spike.cr      the spike, until its pieces are absorbed (PLAN, "Bringing in the spike")
 ```
 

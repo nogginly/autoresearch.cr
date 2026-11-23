@@ -7,9 +7,9 @@ CUDA        ?=
 
 DEVICE_FLAGS := $(if $(CUDA),-Dcuda)
 
-FORMAT_PATHS := $(wildcard train.cr src spec tools)
+FORMAT_PATHS := $(wildcard train.cr src spec tools bench)
 
-.PHONY: deps spec lint format build test clean fixtures
+.PHONY: deps spec lint format build test clean fixtures bench
 
 ## deps: install shards and build the linter, if missing
 deps: lib/.shards.info $(AMEBA)
@@ -50,6 +50,10 @@ bin/gpt_spike: spikes/gpt_spike.cr lib/.shards.info FORCE
 ## fixtures: regenerate spec/fixtures from the pinned original (needs Python 3 and the network)
 fixtures:
 	scripts/fixtures/regenerate.sh
+
+## bench: measure the optimizer step against a training step (DEVICE=blas|metal|cuda, BATCH=sequences)
+bench: lib/.shards.info
+	$(CRYSTAL) run --release -Dautoresearch_spec $(DEVICE_FLAGS) bench/optimizer_step.cr -- $(or $(DEVICE),blas) $(or $(BATCH),1)
 
 ## test: run the specs and the linter
 test: spec lint

@@ -41,6 +41,7 @@ tools/
   prepare.cr               the prepare tool's commands
   prepare/                 fetch, parquet, bpe_trainer, tokenize
 scripts/fixtures/          Python: makes the reference fixtures (the only Python here)
+bench/                     benchmarks, such as the optimizer step against a training step
 spec/                      parity specs and fixtures
 spikes/                    the spike, until absorbed (see PLAN.md)
 program.md                 the agent's instructions
@@ -75,7 +76,7 @@ These come from reading `train.py` and `prepare.py`; each is a place a port can 
 
 1. Constants: the hyperparameters, depth, device batch size, profile.
 2. `GPT` and its parts, as `Tensomite::Module`s. Parameters are found by instance variable, so adding one is adding a field.
-3. `MuonAdamW`, an `Optimizer` that overrides `updates` to step Adam groups per parameter and Muon groups stacked by shape, and keeps its state through `keep`, so `state`, `restore` and buffer release work as for tensomite's own.
+3. `MuonAdamW`, all of it in `train.cr` as in `train.py`, Newton–Schulz included (Decision E): an `Optimizer` that overrides `updates` to step Adam groups per parameter and Muon groups stacked by shape, and keeps its state through `keep`, so `state`, `restore` and buffer release work as for tensomite's own.
 4. The loop.
 5. `main`, behind a compile flag so specs can load the rest (Decision C).
 
@@ -114,6 +115,5 @@ The device is chosen by flag: `cpu` is tensomite's naive oracle, kept for parity
 
 ## Open questions
 
-1. Where Muon lives, library or app (PLAN, Decision E).
-2. The scaled-down profile: dataset, sequence length, depth (Decision H).
-3. Whether `peak_vram_mb` waits for a tensomite memory high-water mark or reports process memory meanwhile.
+1. The scaled-down profile: dataset, sequence length, depth (Decision H).
+2. Whether `peak_vram_mb` waits for a tensomite memory high-water mark or reports process memory meanwhile.
