@@ -16,6 +16,17 @@ ASPECT_RATIO   =  64    # model_dim = depth * ASPECT_RATIO
 HEAD_DIM       = 128    # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L = full, S = half context
 
+# Optimization
+EMBEDDING_LR   =   0.6       # learning rate for token embeddings (Adam)
+UNEMBEDDING_LR = 0.004       # learning rate for lm_head (Adam)
+MATRIX_LR      =  0.04       # learning rate for matrix parameters (Muon)
+SCALAR_LR      =   0.5       # learning rate for per-layer scalars (Adam)
+WEIGHT_DECAY   =   0.2       # cautious weight decay for Muon
+ADAM_BETAS     = {0.8, 0.95} # Adam beta1, beta2
+WARMUP_RATIO   = 0.0         # fraction of time budget for LR warmup
+WARMDOWN_RATIO = 0.5         # fraction of time budget for LR warmdown
+FINAL_LR_FRAC  = 0.0         # final LR as fraction of initial
+
 # Model size
 DEPTH = 8 # number of transformer layers
 
@@ -221,7 +232,7 @@ class GPT < Tensomite::Module
   # Returns the estimated FLOPs per token, forward and backward, as train.py counts them.
   def estimate_flops : Int64
     nparams = count(params)
-    nparams_exclude = count(@transformer.wte.params + @value_embeds.values.flat_map(&.params) + [@resid_lambdas, @x0_lambdas])
+    nparams_exclude = count(params_named("transformer.wte.") + params_named("value_embeds.") + [@resid_lambdas, @x0_lambdas])
     h = config.n_head.to_i64
     q = (config.n_embd // config.n_head).to_i64
     t = config.sequence_len
@@ -232,14 +243,40 @@ class GPT < Tensomite::Module
   # Returns the parameter counts by group, as train.py's `num_scaling_params`.
   def num_scaling_params : Hash(String, Int64)
     counts = {
-      "wte"                  => count(@transformer.wte.params),
-      "value_embeds"         => count(@value_embeds.values.flat_map(&.params)),
-      "lm_head"              => count(@lm_head.params),
-      "transformer_matrices" => count(@transformer.h.flat_map(&.params)),
+      "wte"                  => count(params_named("transformer.wte.")),
+      "value_embeds"         => count(params_named("value_embeds.")),
+      "lm_head"              => count(params_named("lm_head.")),
+      "transformer_matrices" => count(params_named("transformer.h.")),
       "scalars"              => count([@resid_lambdas, @x0_lambdas]),
     }
     counts["total"] = counts.values.sum
     counts
+  end
+
+  # Returns a `MuonAdamW` over every parameter, grouped as train.py groups them:
+  # Adam for the head, the token embedding, the value embeddings and the two
+  # scalar vectors, with the head's and embeddings' rates scaled by
+  # `(n_embd / 768)^-½`; Muon for the blocks' matrices, one group per shape.
+  def setup_optimizer(unembedding_lr = 0.004, embedding_lr = 0.2, matrix_lr = 0.02,
+                      weight_decay = 0.0, adam_betas = {0.8, 0.95}, scalar_lr = 0.5) : MuonAdamW
+    named = named_params.to_a
+    indices = ->(prefix : String) { (0...named.size).select { |i| named[i][0].starts_with?(prefix) } }
+    matrix_params = indices.call("transformer.h.")
+    dmodel_lr_scale = (config.n_embd / 768) ** -0.5
+    groups = [
+      AdamWGroup.new(indices.call("lm_head."), unembedding_lr * dmodel_lr_scale, adam_betas, 1e-10, 0.0),
+      AdamWGroup.new(indices.call("transformer.wte."), embedding_lr * dmodel_lr_scale, adam_betas, 1e-10, 0.0),
+      AdamWGroup.new(indices.call("value_embeds."), embedding_lr * dmodel_lr_scale, adam_betas, 1e-10, 0.0),
+      AdamWGroup.new(indices.call("resid_lambdas"), scalar_lr * 0.01, adam_betas, 1e-10, 0.0),
+      AdamWGroup.new(indices.call("x0_lambdas"), scalar_lr, {0.96, 0.95}, 1e-10, 0.0),
+    ] of ParamGroup
+    # train.py orders shapes as [out, in], PyTorch's layout; tensomite stores [in, out].
+    shapes = matrix_params.map { |i| named[i][1].shape.reverse }.uniq!.sort!
+    shapes.each do |shape|
+      members = matrix_params.select { |i| named[i][1].shape.reverse == shape }
+      groups << MuonGroup.new(members, matrix_lr, momentum: 0.95, ns_steps: 5, beta2: 0.95, weight_decay: weight_decay)
+    end
+    MuonAdamW.new(named.map(&.[1]), groups)
   end
 
   # Returns the logits, `[b * t, vocab_size]`, for token ids *idx*, `[b, t]`; or,
@@ -269,6 +306,12 @@ class GPT < Tensomite::Module
     @masks[{t, window}] ||= window_mask(t, window, @device)
   end
 
+  # Returns the parameters whose names start with *prefix*, in model order. Names
+  # come from this model, not a child's `params`, which would rename them.
+  private def params_named(prefix : String) : Array(Parameter)
+    named_params.select { |name, _| name.starts_with?(prefix) }.values
+  end
+
   private def count(parameters : Array(Parameter)) : Int64
     parameters.sum(0i64, &.shape.product(1i64))
   end
@@ -290,6 +333,206 @@ def build_model_config(depth : Int32) : GPTConfig
     n_layer: depth, n_head: num_heads, n_kv_head: num_heads, n_embd: model_dim,
     window_pattern: WINDOW_PATTERN,
   )
+end
+
+# ---------------------------------------------------------------------------
+# Optimizer (MuonAdamW)
+# ---------------------------------------------------------------------------
+
+POLAR_EXPRESS_COEFFS = [
+  {8.156554524902461, -22.48329292557795, 15.878769915207462},
+  {4.042929935166739, -2.808917465908714, 0.5000178451051316},
+  {3.8916678022926607, -2.772484153217685, 0.5060648178503393},
+  {3.285753657755655, -2.3681294933425376, 0.46449024233003106},
+  {2.3465413258596377, -1.7097828382687081, 0.42323551169305323},
+]
+
+# Parameters stepped by AdamW, by index into the optimizer's parameters, with
+# their settings. The schedule sets `lr` from `initial_lr` each step.
+class AdamWGroup
+  getter params : Array(Int32)
+  property lr : Float64
+  getter initial_lr : Float64
+  getter betas : {Float64, Float64}
+  getter eps : Float64
+  property weight_decay : Float64
+
+  def initialize(@params, @lr, @betas, @eps, @weight_decay)
+    @initial_lr = @lr
+  end
+end
+
+# Matrices of one shape stepped together by Muon, by index into the optimizer's
+# parameters, with their settings. The schedule sets `lr`, `momentum` and
+# `weight_decay` each step.
+class MuonGroup
+  getter params : Array(Int32)
+  property lr : Float64
+  getter initial_lr : Float64
+  property momentum : Float64
+  getter ns_steps : Int32
+  getter beta2 : Float64
+  property weight_decay : Float64
+
+  def initialize(@params, @lr, *, @momentum, @ns_steps, @beta2, @weight_decay)
+    @initial_lr = @lr
+  end
+end
+
+alias ParamGroup = AdamWGroup | MuonGroup
+
+# train.py's combined optimizer: AdamW for each parameter of an `AdamWGroup`,
+# and Muon for each `MuonGroup`, whose matrices are stacked and orthogonalised
+# together. Muon works on `[out, in]` matrices, as train.py does: it transposes
+# tensomite's `[in, out]` weights and transposes the result back.
+#
+# State is kept per parameter index (`exp_avg`, `exp_avg_sq`) and per Muon
+# group, under its first parameter's index (`momentum_buffer`,
+# `second_momentum_buffer`), so `#state` and `#restore` resume a run exactly.
+class MuonAdamW < Optimizer
+  getter param_groups : Array(ParamGroup)
+  @exp_avg = {} of Int32 => Tensor
+  @exp_avg_sq = {} of Int32 => Tensor
+  @momentum_buffer = {} of Int32 => Tensor
+  @second_momentum_buffer = {} of Int32 => Tensor
+
+  # Raises `ArgumentError` unless every one of *params* is in exactly one of *param_groups*.
+  def initialize(params : Array(Parameter), @param_groups : Array(ParamGroup))
+    @slots = params
+    covered = param_groups.flat_map(&.params).sort!
+    unless covered == (0...params.size).to_a
+      raise ArgumentError.new("param groups must hold each of #{params.size} params once, not #{covered}")
+    end
+  end
+
+  protected def tables : Hash(String, Hash(Int32, Tensor))
+    {"exp_avg" => @exp_avg, "exp_avg_sq" => @exp_avg_sq,
+     "momentum_buffer" => @momentum_buffer, "second_momentum_buffer" => @second_momentum_buffer}
+  end
+
+  protected def update(index : Int32, param : Tensor, grad : Tensor) : Tensor
+    raise Error.new("MuonAdamW steps its groups in #updates")
+  end
+
+  protected def updates(params : Array(Tensor), grads : Array(Tensor)) : Array(Tensor)
+    result = Array(Tensor?).new(params.size, nil)
+    param_groups.each do |group|
+      case group
+      in AdamWGroup
+        group.params.each { |i| result[i] = step_adamw(group, i, params[i], grads[i]) }
+      in MuonGroup
+        step_muon(group, params, grads).each_with_index { |updated, member| result[group.params[member]] = updated }
+      end
+    end
+    result.map_with_index { |updated, i| updated || raise Error.new("no group updated param #{i}") }
+  end
+
+  # Returns param *i* after one AdamW step:
+  # 1. decay the param by `lr × weight_decay`;
+  # 2. move the first and second moments towards the gradient and its square;
+  # 3. step by the bias-corrected first moment over the root of the second.
+  private def step_adamw(group : AdamWGroup, i : Int32, p : Tensor, grad : Tensor) : Tensor
+    beta1, beta2 = group.betas
+    p = p * (1 - group.lr * group.weight_decay)
+    exp_avg = keep(@exp_avg, i, lerp(@exp_avg[i]?, grad, 1 - beta1))
+    exp_avg_sq = keep(@exp_avg_sq, i, lerp(@exp_avg_sq[i]?, grad * grad, 1 - beta2))
+    bias1 = 1 - beta1 ** steps
+    bias2 = 1 - beta2 ** steps
+    denom = (exp_avg_sq / bias2).sqrt + group.eps
+    p - (exp_avg / denom) * (group.lr / bias1)
+  end
+
+  # Returns the group's params after one Muon step, in group order:
+  # 1. Nesterov momentum on the stacked `[out, in]` gradients;
+  # 2. polar-express orthogonalisation, `ns_steps` Newton–Schulz iterations;
+  # 3. NorMuon: scale by a running second moment along the smaller axis,
+  #    keeping the update's overall norm;
+  # 4. cautious weight decay, only where the update and the param agree in sign.
+  private def step_muon(group : MuonGroup, params : Array(Tensor), grads : Array(Tensor)) : Array(Tensor)
+    first = group.params.first
+    stacked_grads = Tensor.stack(group.params.map { |i| grads[i].transpose })
+    stacked_params = Tensor.stack(group.params.map { |i| params[i].transpose })
+    rows, cols = stacked_grads.shape[-2], stacked_grads.shape[-1]
+    red_dim = rows >= cols ? -1 : -2
+
+    momentum = group.momentum
+    momentum_buffer = keep(@momentum_buffer, first, lerp(@momentum_buffer[first]?, stacked_grads, 1 - momentum))
+    g = stacked_grads + (momentum_buffer - stacked_grads) * momentum
+
+    x = g / (frobenius(g) * 1.02 + 1e-6)
+    POLAR_EXPRESS_COEFFS.first(group.ns_steps).each do |(a, b, c)|
+      if rows > cols
+        gram = x.transpose.matmul(x)
+        x = x * a + x.matmul(gram * b + gram.matmul(gram) * c)
+      else
+        gram = x.matmul(x.transpose)
+        x = x * a + (gram * b + gram.matmul(gram) * c).matmul(x)
+      end
+    end
+    g = x
+
+    floor = Tensor.scalar(1e-10, DType::F32, g.device)
+    v_mean = g.square.mean(red_dim, true)
+    red_dim_size = g.shape[red_dim]
+    v_norm = (v_mean.sum(-1, true).sum(-2, true) * red_dim_size).sqrt
+    second = keep(@second_momentum_buffer, first, lerp(@second_momentum_buffer[first]?, v_mean, 1 - group.beta2))
+    step_size = second.maximum(floor).rsqrt
+    v_norm_new = (v_mean * red_dim_size * step_size.square).sum(-1, true).sum(-2, true).sqrt
+    g = g * (step_size * (v_norm / v_norm_new.maximum(floor)))
+
+    lr = group.lr * Math.max(1.0, rows / cols) ** 0.5
+    mask = (g * stacked_params).greater_equal(Tensor.scalar(0.0, DType::F32, g.device))
+    updated = stacked_params - (g * lr + stacked_params * mask * (lr * group.weight_decay))
+    updated.unbind(0).map(&.transpose.contiguous)
+  end
+
+  # Returns `previous + (target - previous) × weight`, from zero when there is no *previous*.
+  private def lerp(previous : Tensor?, target : Tensor, weight : Float64) : Tensor
+    previous ? previous + (target - previous) * weight : target * weight
+  end
+
+  # Returns the Frobenius norm of each matrix in the stack *x*, `[n, 1, 1]`.
+  private def frobenius(x : Tensor) : Tensor
+    x.square.sum(-1, true).sum(-2, true).sqrt
+  end
+end
+
+# Returns the learning-rate multiplier at *progress* through the time budget:
+# a linear warm-up, a plateau at 1, then a linear warm-down to `FINAL_LR_FRAC`.
+def get_lr_multiplier(progress : Float64) : Float64
+  if progress < WARMUP_RATIO
+    WARMUP_RATIO > 0 ? progress / WARMUP_RATIO : 1.0
+  elsif progress < 1.0 - WARMDOWN_RATIO
+    1.0
+  else
+    cooldown = (1.0 - progress) / WARMDOWN_RATIO
+    cooldown * 1.0 + (1 - cooldown) * FINAL_LR_FRAC
+  end
+end
+
+# Returns Muon's momentum at *step*: from 0.85 to 0.95 over the first 300 steps.
+def get_muon_momentum(step : Int32) : Float64
+  frac = Math.min(step / 300, 1)
+  (1 - frac) * 0.85 + frac * 0.95
+end
+
+# Returns Muon's weight decay at *progress*: `WEIGHT_DECAY`, falling linearly to zero.
+def get_weight_decay(progress : Float64) : Float64
+  WEIGHT_DECAY * (1 - progress)
+end
+
+# Sets every group's schedule-driven settings for the step at *progress* and *step*, as train.py's loop does.
+def apply_schedules(optimizer : MuonAdamW, progress : Float64, step : Int32) : Nil
+  lrm = get_lr_multiplier(progress)
+  muon_momentum = get_muon_momentum(step)
+  muon_weight_decay = get_weight_decay(progress)
+  optimizer.param_groups.each do |group|
+    group.lr = group.initial_lr * lrm
+    if group.is_a?(MuonGroup)
+      group.momentum = muon_momentum
+      group.weight_decay = muon_weight_decay
+    end
+  end
 end
 
 # ---------------------------------------------------------------------------

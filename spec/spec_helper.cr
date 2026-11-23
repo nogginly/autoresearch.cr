@@ -49,3 +49,37 @@ def expect_close_to_scale(actual : Array(Float32), expected : Array(Float32), re
     fail "#{label}: element #{at} is #{actual[at]}, expected #{expected[at]}; |difference| #{worst} > #{relative} × #{scale}"
   end
 end
+
+# Fixtures from scripts/fixtures/make_fixtures.py: train.py's model at the
+# pinned commit, run by PyTorch on the CPU in float32 (see spec/fixtures/README.md).
+MODEL_FIXTURES = "#{__DIR__}/fixtures/model"
+
+# Returns *tensor*, a parameter named *name* or its gradient, in the other
+# layout: PyTorch's `[out, in]` for a Linear weight in tensomite's `[in, out]`,
+# and back. Other tensors are returned as they are.
+def other_layout(name : String, tensor : Tensor) : Tensor
+  name.matches?(TRANSPOSED) ? tensor.transpose.contiguous : tensor
+end
+
+# Linear weights, which PyTorch stores as [out, in] and tensomite as [in, out].
+TRANSPOSED = /(c_q|c_k|c_v|c_proj|c_fc|ve_gate|lm_head)\.weight$/
+
+# Returns the model fixtures' `expected.json`.
+def model_meta : JSON::Any
+  JSON.parse(File.read("#{MODEL_FIXTURES}/expected.json"))
+end
+
+# Returns the config of the tiny fixture model.
+def tiny_config : GPTConfig
+  t = model_meta["tiny"]
+  GPTConfig.new(
+    sequence_len: t["sequence_len"].as_i, vocab_size: t["vocab_size"].as_i, n_layer: t["n_layer"].as_i,
+    n_head: t["n_head"].as_i, n_kv_head: t["n_kv_head"].as_i, n_embd: t["n_embd"].as_i,
+    window_pattern: t["window_pattern"].as_s,
+  )
+end
+
+# Returns the tiny fixture model on *device*, with the fixture's weights.
+def fixture_model(device : Device) : GPT
+  GPT.new(tiny_config, device).load("#{MODEL_FIXTURES}/weights.safetensors", transposed: TRANSPOSED)
+end
