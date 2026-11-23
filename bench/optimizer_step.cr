@@ -6,27 +6,10 @@
 # A training step is train.py's 2^19 tokens. The benchmark times forward and
 # backward on one micro-batch of *batch* sequences of `MAX_SEQ_LEN` tokens and
 # scales it to 2^19 tokens, since a full step is too slow to time on the host.
-require "../train"
-{% if flag?(:darwin) && flag?(:aarch64) %}
-  require "tensomite/metal"
-{% end %}
-{% if flag?(:cuda) %}
-  require "tensomite/cuda"
-{% end %}
+require "./common"
 
 TOTAL_TOKENS = 2 ** 19
 REPEATS      = 3
-
-def pick_device(name : String) : Device
-  return BLAS.default if name == "blas"
-  {% if flag?(:darwin) && flag?(:aarch64) %}
-    return Metal.default if name == "metal"
-  {% end %}
-  {% if flag?(:cuda) %}
-    return CUDA.default if name == "cuda"
-  {% end %}
-  abort "unknown or unavailable device #{name}: use blas, metal (Apple Silicon) or cuda (a -Dcuda build)"
-end
 
 # Returns the median of *REPEATS* timings of the block, after one untimed warm-up.
 def median_seconds(& : -> Nil) : Float64
@@ -46,15 +29,8 @@ device = pick_device(ARGV[0]? || "blas")
 batch = (ARGV[1]? || "1").to_i
 config = build_model_config(DEPTH)
 t = config.sequence_len
-rng = Random.new(1)
-
-model = GPT.new(config, device)
-model.init_weights(rng)
-optimizer = model.setup_optimizer(unembedding_lr: UNEMBEDDING_LR, embedding_lr: EMBEDDING_LR, scalar_lr: SCALAR_LR,
-  adam_betas: ADAM_BETAS, matrix_lr: MATRIX_LR, weight_decay: WEIGHT_DECAY)
+model, optimizer, idx, targets = bench_setup(config, device, batch)
 values = model.params.map(&.value)
-idx = Tensor.from(Array(Int32).new(batch * t) { rng.rand(config.vocab_size) }, [batch, t], device)
-targets = Tensor.from(Array(Int32).new(batch * t) { rng.rand(config.vocab_size) }, [batch, t], device)
 
 grads = [] of Tensor
 forward_backward = median_seconds do

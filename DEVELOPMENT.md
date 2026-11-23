@@ -31,6 +31,7 @@ How to build, test and change this app. For how it works, see [DESIGN.md](DESIGN
 | Remove built programs | `make clean` |
 | Regenerate the fixtures | `make fixtures` |
 | Time the optimizer against a training step | `make bench` (`DEVICE=`, `BATCH=`) |
+| Profile training steps on a GPU | `make profile DEVICE=cuda\|metal` (`BATCH=`, `STEPS=`, `SEQ=`, `DEPTH=`) |
 
 ```mermaid
 flowchart LR
@@ -96,6 +97,20 @@ On the M5 Pro:
 ```bash
 make bench DEVICE=metal BATCH=8
 ```
+
+`bench/profile_step.cr` profiles training steps on a GPU and prints tensomite's per-op report: where a step's time goes, by op and shape. It runs three warm-up steps, then `STEPS` timed as they run, then `STEPS` more with each op timed alone. A step is one micro-batch, forward and backward, plus the optimizer step. `SEQ` and `DEPTH` change the model's shape. On the GB10:
+
+```bash
+make profile CUDA=1 DEVICE=cuda BATCH=8
+```
+
+On the M5 Pro:
+
+```bash
+make profile DEVICE=metal BATCH=8
+```
+
+`make profile CUDA=1 DEVICE=cuda BATCH=8 SEQ=512` profiles a shorter context for comparison.
 
 ## Continuous integration
 
