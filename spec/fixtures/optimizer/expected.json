@@ -1,0 +1,208 @@
+{
+  "source": "https://github.com/karpathy/autoresearch",
+  "commit": "228791fb499afffb54b46200aca536f79142f117",
+  "torch": "2.9.1+cu128",
+  "start": "the tiny model of ../model, its weights as in ../model/weights.safetensors",
+  "grad_scale": 0.01,
+  "hyperparameters": {
+    "ASPECT_RATIO": 64,
+    "HEAD_DIM": 128,
+    "WINDOW_PATTERN": "SSSL",
+    "EMBEDDING_LR": 0.6,
+    "UNEMBEDDING_LR": 0.004,
+    "MATRIX_LR": 0.04,
+    "SCALAR_LR": 0.5,
+    "WEIGHT_DECAY": 0.2,
+    "ADAM_BETAS": [
+      0.8,
+      0.95
+    ],
+    "WARMUP_RATIO": 0.0,
+    "WARMDOWN_RATIO": 0.5,
+    "FINAL_LR_FRAC": 0.0
+  },
+  "substitutions": [
+    "the fused steps run eagerly, not through torch.compile, so the CPU needs no compiler toolchain and the arithmetic is as written",
+    "Newton-Schulz runs in float32, not BF16 (Decision G)"
+  ],
+  "groups": [
+    {
+      "kind": "adamw",
+      "lr": 0.013856406460551019,
+      "betas": [
+        0.8,
+        0.95
+      ],
+      "eps": 1e-10,
+      "weight_decay": 0.0,
+      "initial_lr": 0.013856406460551019,
+      "params": [
+        "lm_head.weight"
+      ]
+    },
+    {
+      "kind": "adamw",
+      "lr": 2.078460969082653,
+      "betas": [
+        0.8,
+        0.95
+      ],
+      "eps": 1e-10,
+      "weight_decay": 0.0,
+      "initial_lr": 2.078460969082653,
+      "params": [
+        "transformer.wte.weight"
+      ]
+    },
+    {
+      "kind": "adamw",
+      "lr": 2.078460969082653,
+      "betas": [
+        0.8,
+        0.95
+      ],
+      "eps": 1e-10,
+      "weight_decay": 0.0,
+      "initial_lr": 2.078460969082653,
+      "params": [
+        "value_embeds.1.weight",
+        "value_embeds.3.weight"
+      ]
+    },
+    {
+      "kind": "adamw",
+      "lr": 0.005,
+      "betas": [
+        0.8,
+        0.95
+      ],
+      "eps": 1e-10,
+      "weight_decay": 0.0,
+      "initial_lr": 0.005,
+      "params": [
+        "resid_lambdas"
+      ]
+    },
+    {
+      "kind": "adamw",
+      "lr": 0.5,
+      "betas": [
+        0.96,
+        0.95
+      ],
+      "eps": 1e-10,
+      "weight_decay": 0.0,
+      "initial_lr": 0.5,
+      "params": [
+        "x0_lambdas"
+      ]
+    },
+    {
+      "kind": "muon",
+      "lr": 0.04,
+      "momentum": 0.95,
+      "ns_steps": 5,
+      "beta2": 0.95,
+      "weight_decay": 0.2,
+      "initial_lr": 0.04,
+      "params": [
+        "transformer.h.1.attn.ve_gate.weight",
+        "transformer.h.3.attn.ve_gate.weight"
+      ]
+    },
+    {
+      "kind": "muon",
+      "lr": 0.04,
+      "momentum": 0.95,
+      "ns_steps": 5,
+      "beta2": 0.95,
+      "weight_decay": 0.2,
+      "initial_lr": 0.04,
+      "params": [
+        "transformer.h.0.attn.c_q.weight",
+        "transformer.h.0.attn.c_k.weight",
+        "transformer.h.0.attn.c_v.weight",
+        "transformer.h.0.attn.c_proj.weight",
+        "transformer.h.1.attn.c_q.weight",
+        "transformer.h.1.attn.c_k.weight",
+        "transformer.h.1.attn.c_v.weight",
+        "transformer.h.1.attn.c_proj.weight",
+        "transformer.h.2.attn.c_q.weight",
+        "transformer.h.2.attn.c_k.weight",
+        "transformer.h.2.attn.c_v.weight",
+        "transformer.h.2.attn.c_proj.weight",
+        "transformer.h.3.attn.c_q.weight",
+        "transformer.h.3.attn.c_k.weight",
+        "transformer.h.3.attn.c_v.weight",
+        "transformer.h.3.attn.c_proj.weight"
+      ]
+    },
+    {
+      "kind": "muon",
+      "lr": 0.04,
+      "momentum": 0.95,
+      "ns_steps": 5,
+      "beta2": 0.95,
+      "weight_decay": 0.2,
+      "initial_lr": 0.04,
+      "params": [
+        "transformer.h.0.mlp.c_proj.weight",
+        "transformer.h.1.mlp.c_proj.weight",
+        "transformer.h.2.mlp.c_proj.weight",
+        "transformer.h.3.mlp.c_proj.weight"
+      ]
+    },
+    {
+      "kind": "muon",
+      "lr": 0.04,
+      "momentum": 0.95,
+      "ns_steps": 5,
+      "beta2": 0.95,
+      "weight_decay": 0.2,
+      "initial_lr": 0.04,
+      "params": [
+        "transformer.h.0.mlp.c_fc.weight",
+        "transformer.h.1.mlp.c_fc.weight",
+        "transformer.h.2.mlp.c_fc.weight",
+        "transformer.h.3.mlp.c_fc.weight"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "progress": 0.0,
+      "step": 0,
+      "lr_multiplier": 1.0,
+      "muon_momentum": 0.85,
+      "muon_weight_decay": 0.2
+    },
+    {
+      "progress": 0.3,
+      "step": 75,
+      "lr_multiplier": 1.0,
+      "muon_momentum": 0.875,
+      "muon_weight_decay": 0.13999999999999999
+    },
+    {
+      "progress": 0.55,
+      "step": 150,
+      "lr_multiplier": 0.8999999999999999,
+      "muon_momentum": 0.8999999999999999,
+      "muon_weight_decay": 0.09
+    },
+    {
+      "progress": 0.8,
+      "step": 225,
+      "lr_multiplier": 0.3999999999999999,
+      "muon_momentum": 0.9249999999999999,
+      "muon_weight_decay": 0.039999999999999994
+    },
+    {
+      "progress": 0.95,
+      "step": 300,
+      "lr_multiplier": 0.10000000000000009,
+      "muon_momentum": 0.95,
+      "muon_weight_decay": 0.010000000000000009
+    }
+  ]
+}

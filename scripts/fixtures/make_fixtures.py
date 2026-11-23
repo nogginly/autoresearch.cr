@@ -1,10 +1,10 @@
-"""Writes the model parity fixtures from karpathy/autoresearch's train.py.
+"""Writes the parity fixtures from karpathy/autoresearch's train.py.
 
-Usage: python make_model_fixtures.py AUTORESEARCH_DIR OUT_DIR
+Usage: python make_fixtures.py AUTORESEARCH_DIR FIXTURES_DIR
 
-The model code is train.py's own, read from AUTORESEARCH_DIR at the pinned
-commit and run on the CPU in float32, with only the substitutions in PATCHES.
-Writes to OUT_DIR:
+The model and optimizer code is train.py's own, read from AUTORESEARCH_DIR at
+the pinned commit and run on the CPU in float32, with only the substitutions in
+MODEL_PATCHES and OPTIMIZER_PATCHES. Writes to FIXTURES_DIR/model:
 
   weights.safetensors   the tiny model's parameters, named as in train.py and
                         train.cr, in PyTorch's layout (Linear weights [out, in])
@@ -13,6 +13,15 @@ Writes to OUT_DIR:
                         grad.<name> for every parameter, in PyTorch's layout
   expected.json         provenance, the tiny config, parameter names, and parameter counts and
                         FLOPs per token at depth 8
+
+and to FIXTURES_DIR/optimizer, five MuonAdamW steps on the tiny model from fixed
+gradients, with train.py's hyperparameters and schedules:
+
+  tensors.safetensors   initial.<name>, grad.<k>.<name> for steps k = 1 to 5,
+                        after1.<name> and after5.<name>, in PyTorch's layout
+  expected.json         provenance, the hyperparameters, the optimizer's groups
+                        as setup_optimizer makes them, and each step's inputs
+                        to the schedules and the values they returned
 """
 
 import hashlib
@@ -36,19 +45,28 @@ TINY = dict(sequence_len=16, vocab_size=128, n_layer=4, n_head=2, n_kv_head=2, n
 BATCH = 2
 SEED = 42
 
-# Each patch is (original text, replacement, reason); each original must occur exactly once.
-PATCHES = [
+# Optimizer steps: the progress through the time budget and the step number
+# passed to the schedules, chosen to cover warm-down, weight-decay decay and
+# momentum warm-up.
+OPTIMIZER_STEPS = [(0.0, 0), (0.3, 75), (0.55, 150), (0.8, 225), (0.95, 300)]
+GRAD_SCALE = 0.01
+
+# Each patch is (original text, replacement, reason, occurrences); each original
+# must occur exactly that many times.
+MODEL_PATCHES = [
     (
         "y = fa3.flash_attn_func(q, k, v, causal=True, window_size=window_size)",
         "y = windowed_attention(q, k, v, window_size)",
         "FlashAttention 3 needs a Hopper GPU; scaled_dot_product_attention with the same "
         "causal sliding-window mask (key j visible from query i when 0 <= i - j <= window) "
         "computes the same function",
+        1,
     ),
     (
         "        cos, sin = cos.bfloat16(), sin.bfloat16()\n",
         "",
         "rotary tables stay float32 (Decision G: F32 until tensomite computes in BF16)",
+        1,
     ),
     (
         "        self.transformer.wte.to(dtype=torch.bfloat16)\n"
@@ -56,6 +74,23 @@ PATCHES = [
         "            ve.to(dtype=torch.bfloat16)\n",
         "",
         "embeddings stay float32 (Decision G)",
+        1,
+    ),
+]
+
+OPTIMIZER_PATCHES = [
+    (
+        "@torch.compile(dynamic=False, fullgraph=True)\n",
+        "",
+        "the fused steps run eagerly, not through torch.compile, so the CPU needs no compiler "
+        "toolchain and the arithmetic is as written",
+        2,
+    ),
+    (
+        "    X = g.bfloat16()\n",
+        "    X = g\n",
+        "Newton-Schulz runs in float32, not BF16 (Decision G)",
+        1,
     ),
 ]
 
@@ -86,7 +121,8 @@ def check_sha256(path, expected):
 
 
 def load_original(source_dir):
-    """Returns train.py's model code, patched, as a namespace, and prepare.py's and train.py's constants."""
+    """Returns train.py's model and optimizer code, patched, as a namespace; its
+    hyperparameters; build_model_config; and the three schedule functions."""
     train_path = os.path.join(source_dir, "train.py")
     prepare_path = os.path.join(source_dir, "prepare.py")
     check_sha256(train_path, TRAIN_SHA256)
@@ -97,10 +133,10 @@ def load_original(source_dir):
     start = train.index("@dataclass\nclass GPTConfig")
     end = train.index("# ---------------------------------------------------------------------------\n# Hyperparameters")
     code = train[start:end]
-    for old, new, _ in PATCHES:
+    for old, new, _, occurrences in MODEL_PATCHES + OPTIMIZER_PATCHES:
         count = code.count(old)
-        if count != 1:
-            sys.exit(f"patch target occurs {count} times, not once: {old!r}")
+        if count != occurrences:
+            sys.exit(f"patch target occurs {count} times, not {occurrences}: {old!r}")
         code = code.replace(old, new)
 
     namespace = dict(torch=torch, nn=nn, F=F, math=math, dataclass=dataclass, asdict=asdict,
@@ -110,26 +146,23 @@ def load_original(source_dir):
     def constant(source, name):
         return eval(re.search(rf"^{name} = (.+?)\s*(#.*)?$", source, re.M).group(1))
 
-    constants = dict(
-        ASPECT_RATIO=constant(train, "ASPECT_RATIO"),
-        HEAD_DIM=constant(train, "HEAD_DIM"),
-        WINDOW_PATTERN=constant(train, "WINDOW_PATTERN"),
-        MAX_SEQ_LEN=constant(prepare, "MAX_SEQ_LEN"),
-        vocab_size=constant(prepare, "VOCAB_SIZE"),
-    )
-    build_start = train.index("def build_model_config(depth):")
-    build_end = train.index("config = build_model_config(DEPTH)")
-    build_namespace = dict(namespace, **constants)
-    exec(compile(train[build_start:build_end], train_path, "exec"), build_namespace)
-    return namespace, build_namespace["build_model_config"]
+    hyperparameters = {
+        name: constant(train, name)
+        for name in ["ASPECT_RATIO", "HEAD_DIM", "WINDOW_PATTERN", "EMBEDDING_LR", "UNEMBEDDING_LR", "MATRIX_LR",
+                     "SCALAR_LR", "WEIGHT_DECAY", "ADAM_BETAS", "WARMUP_RATIO", "WARMDOWN_RATIO", "FINAL_LR_FRAC"]
+    }
+    constants = dict(hyperparameters, MAX_SEQ_LEN=constant(prepare, "MAX_SEQ_LEN"), vocab_size=constant(prepare, "VOCAB_SIZE"))
+    extra = dict(namespace, **constants)
+    for start, end in [("def build_model_config(depth):", "config = build_model_config(DEPTH)"),
+                       ("def get_lr_multiplier(progress):", "# ---------------------------------------------------------------------------\n# Training loop")]:
+        exec(compile(train[train.index(start):train.index(end)], train_path, "exec"), extra)
+    schedules = {name: extra[name] for name in ["get_lr_multiplier", "get_muon_momentum", "get_weight_decay"]}
+    return namespace, hyperparameters, extra["build_model_config"], schedules
 
 
-def main():
-    source_dir, out_dir = sys.argv[1], sys.argv[2]
+def make_model(ns, build_model_config, out_dir):
+    """Writes the model fixtures and returns the tiny model, its parameters as they were saved."""
     os.makedirs(out_dir, exist_ok=True)
-    torch.use_deterministic_algorithms(True)
-    torch.set_num_threads(1)
-    ns, build_model_config = load_original(source_dir)
     GPT, GPTConfig = ns["GPT"], ns["GPTConfig"]
 
     # 1. The tiny model, initialised as train.py does, then perturbed (see OTHER_SUBSTITUTIONS).
@@ -180,7 +213,7 @@ def main():
         tiny=asdict(config),
         window_sizes=[w[0] for w in model.window_sizes],
         value_embed_layers=sorted(int(key) for key in model.value_embeds.keys()),
-        substitutions=[reason for _, _, reason in PATCHES] + OTHER_SUBSTITUTIONS,
+        substitutions=[reason for _, _, reason, _ in MODEL_PATCHES] + OTHER_SUBSTITUTIONS,
         names=[name for name, _ in model.named_parameters()],
         depth8=dict(
             config=asdict(reference.config),
@@ -193,6 +226,76 @@ def main():
         json.dump(meta, f, indent=2)
         f.write("\n")
     print(f"loss {loss.item():.6f}; wrote {out_dir}")
+    return model
+
+
+def make_optimizer(model, hyperparameters, schedules, out_dir):
+    """Writes the optimizer fixtures: five steps of train.py's MuonAdamW on *model* from fixed gradients."""
+    os.makedirs(out_dir, exist_ok=True)
+    h = hyperparameters
+    params = dict(model.named_parameters())
+    tensors = {f"initial.{n}": p.detach().clone().contiguous() for n, p in params.items()}
+
+    # 1. The optimizer as train.py sets it up, with its hyperparameters.
+    optimizer = model.setup_optimizer(
+        unembedding_lr=h["UNEMBEDDING_LR"], embedding_lr=h["EMBEDDING_LR"], scalar_lr=h["SCALAR_LR"],
+        adam_betas=h["ADAM_BETAS"], matrix_lr=h["MATRIX_LR"], weight_decay=h["WEIGHT_DECAY"],
+    )
+    name_of = {id(p): n for n, p in params.items()}
+    groups = []
+    for group in optimizer.param_groups:
+        entry = {k: v for k, v in group.items() if k != "params"}
+        entry["params"] = [name_of[id(p)] for p in group["params"]]
+        if "betas" in entry:
+            entry["betas"] = list(entry["betas"])
+        groups.append(entry)
+
+    # 2. Five steps, each from a fixed gradient, with the schedules applied as train.py's loop does.
+    generator = torch.Generator().manual_seed(SEED + 1)
+    steps = []
+    for k, (progress, step) in enumerate(OPTIMIZER_STEPS, start=1):
+        lrm = schedules["get_lr_multiplier"](progress)
+        muon_momentum = schedules["get_muon_momentum"](step)
+        muon_weight_decay = schedules["get_weight_decay"](progress)
+        for group in optimizer.param_groups:
+            group["lr"] = group["initial_lr"] * lrm
+            if group["kind"] == "muon":
+                group["momentum"] = muon_momentum
+                group["weight_decay"] = muon_weight_decay
+        for n, p in params.items():
+            p.grad = GRAD_SCALE * torch.randn(p.shape, generator=generator)
+            tensors[f"grad.{k}.{n}"] = p.grad.clone().contiguous()
+        optimizer.step()
+        if k in (1, 5):
+            tensors.update({f"after{k}.{n}": p.detach().clone().contiguous() for n, p in params.items()})
+        steps.append(dict(progress=progress, step=step, lr_multiplier=lrm, muon_momentum=muon_momentum,
+                          muon_weight_decay=muon_weight_decay))
+
+    save_file(tensors, os.path.join(out_dir, "tensors.safetensors"))
+    meta = dict(
+        source="https://github.com/karpathy/autoresearch",
+        commit=COMMIT,
+        torch=torch.__version__,
+        start="the tiny model of ../model, its weights as in ../model/weights.safetensors",
+        grad_scale=GRAD_SCALE,
+        hyperparameters={k: list(v) if isinstance(v, tuple) else v for k, v in h.items()},
+        substitutions=[reason for _, _, reason, _ in OPTIMIZER_PATCHES],
+        groups=groups,
+        steps=steps,
+    )
+    with open(os.path.join(out_dir, "expected.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+        f.write("\n")
+    print(f"{len(steps)} optimizer steps; wrote {out_dir}")
+
+
+def main():
+    source_dir, fixtures_dir = sys.argv[1], sys.argv[2]
+    torch.use_deterministic_algorithms(True)
+    torch.set_num_threads(1)
+    ns, hyperparameters, build_model_config, schedules = load_original(source_dir)
+    model = make_model(ns, build_model_config, os.path.join(fixtures_dir, "model"))
+    make_optimizer(model, hyperparameters, schedules, os.path.join(fixtures_dir, "optimizer"))
 
 
 if __name__ == "__main__":
