@@ -42,7 +42,7 @@ def with_prepared(& : String, Autoresearch::Tokenizer ->) : Nil
     File.write(File.join(tokenizer_dir, "token_bytes.json"), TokenizerFiles.byte_lengths(merges, Autoresearch::SPECIAL_TOKENS).to_json)
     tokenizer = Autoresearch::Tokenizer.from_directory(tokenizer_dir)
     tokens_dir = File.join(dir, "tokens")
-    Prepare::Tokenize.run("#{DATA_FIXTURES}/parquet", tokens_dir, tokenizer)
+    Prepare::Tokenize.run("#{DATA_FIXTURES}/parquet", tokens_dir, tokenizer, log: IO::Memory.new)
     yield tokens_dir, tokenizer
   ensure
     FileUtils.rm_rf(dir)
