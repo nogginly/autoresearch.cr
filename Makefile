@@ -37,7 +37,11 @@ format:
 	$(CRYSTAL) tool format $(FORMAT_PATHS)
 
 ## build: build the command-line programs into bin/ (release by default)
-build: bin/train bin/gpt_spike
+build: bin/train bin/prepare bin/gpt_spike
+
+bin/prepare: tools/prepare.cr lib/.shards.info FORCE
+	mkdir -p bin
+	$(CRYSTAL) build $(BUILD_FLAGS) -o $@ $<
 
 bin/train: train.cr lib/.shards.info FORCE
 	mkdir -p bin
