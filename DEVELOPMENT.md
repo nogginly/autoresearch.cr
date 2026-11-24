@@ -5,10 +5,15 @@ How to build, test and change this app. For how it works, see [DESIGN.md](DESIGN
 ## Setup
 
 1. **Install Crystal 1.22 or later**, which includes `shards`: `brew install crystal` on macOS or Linux, or [install Crystal](https://crystal-lang.org/install/) from the website.
-2. **Install a BLAS library** for tensomite's `BLAS` device, which runs every model here. macOS has Accelerate already. On Debian or Ubuntu:
+2. **Install a BLAS library and libzstd.** The BLAS library is for tensomite's `BLAS` device, which runs every model here. libzstd is for `bin/prepare`, which decompresses the dataset's Parquet shards with it (Decision J). macOS has Accelerate already. On Debian or Ubuntu:
    ```bash
-   sudo apt-get install libopenblas-dev
+   sudo apt-get install libopenblas-dev libzstd-dev
    ```
+   On macOS:
+   ```bash
+   brew install zstd pkgconf
+   ```
+   `pkgconf` lets the linker find Homebrew's libzstd.
 3. **Install the shards and build the linter:**
    ```bash
    make deps
@@ -30,6 +35,8 @@ How to build, test and change this app. For how it works, see [DESIGN.md](DESIGN
 | Everything before a PR | `make test` (specs, then lint) |
 | Remove built programs | `make clean` |
 | Regenerate the fixtures | `make fixtures` |
+| Prepare the data | `bin/prepare` (after `make build`) |
+| Check prepared data against `prepare.py` | `make check-data` |
 | Time the optimizer against a training step | `make bench` (`DEVICE=`, `BATCH=`) |
 | Profile training steps on a GPU | `make profile DEVICE=cuda\|metal` (`BATCH=`, `STEPS=`, `SEQ=`, `DEPTH=`) |
 
@@ -112,6 +119,21 @@ make profile DEVICE=metal BATCH=8
 
 `make profile CUDA=1 DEVICE=cuda BATCH=8 SEQ=512` profiles a shorter context for comparison.
 
+## Preparing data
+
+`bin/prepare` (`tools/prepare.cr`) fills the cache, `AUTORESEARCH_CACHE` or `~/.cache/autoresearch.cr`. Its commands run in order:
+
+| Command | What it does | Time and size (default 10 training shards, four cores) |
+|---|---|---|
+| `bin/prepare fetch` | downloads `data/shard_NNNNN.parquet` | about 1 GB; minutes, depending on the network |
+| `bin/prepare train-tokenizer` | writes `tokenizer/tokenizer.json` and `token_bytes.json` | about 60 s |
+| `bin/prepare tokenize` | writes `tokens/shard_NNNNN.tokens` | about 23 s and 127 MB per shard |
+| `bin/prepare` | all three | |
+
+`--num-shards N` (-1 for all 6,542) and `--download-workers N` work as in `prepare.py`. Each step skips finished work, so an interrupted run resumes. To start over, delete the cache directory or the part to redo.
+
+`make check-data` compares the cache with `prepare.py` itself, at the pinned commit, on the same shards. It trains `prepare.py`'s tokenizer into `reference/` and compares every token, every document's ids and the first 50 batches of each split, then prints one line per check. It needs Python, as `make fixtures` does, and takes tens of minutes.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request, on Linux (OpenBLAS) and macOS (Accelerate), with Crystal pinned to the minimum in `shard.yml`. Each job runs `make deps`, `make test` and `make build`, then trains the spike for 20 steps as a smoke test. `lib/` and `bin/ameba` are cached, keyed on the OS, the Crystal version and `shard.lock`.
@@ -149,7 +171,10 @@ To change dependencies, edit `shard.yml`, run `shards update` (or `shards instal
 ```
 train.cr                 the editable file: hyperparameters, model; optimizer and loop to come
 src/autoresearch/        the fixed harness: constants.cr so far
-Makefile                 deps, spec, lint, format, build, test, clean, fixtures
+Makefile                 deps, spec, lint, format, build, test, clean, fixtures, check-data, bench, profile
+tools/prepare.cr         bin/prepare: fetch, train-tokenizer, tokenize
+tools/prepare/           its parts: Parquet reader, libzstd binding, BPE trainer, tokenizer files
+tools/batch_digests.cr   bin/batch_digests, for make check-data
 shard.lock               pinned dependency versions, committed
 .github/workflows/ci.yml make deps, test and build on Linux and macOS
 ops.yml                  optional ops actions, each a make call

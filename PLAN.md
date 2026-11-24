@@ -154,6 +154,7 @@ Lettered as in tensomite; each is recorded here when made.
 - **G. `F32` until tensomite has BF16 compute.** Settled. Fixtures are made in `F32` with the original's BF16 casts removed.
 - **H. Profiles.** Open. A `reference` profile (depth 8, sequence 2,048, vocabulary 8,192) and a scaled-down one chosen at M4 (candidates: the same data with sequence 512 and depth 4; or a smaller dataset). A profile is a compile-time flag that picks a constants set, with its own cache directory.
 - **I. Reference machines.** Settled. The GB10 (DGX Spark, CUDA) carries long runs and the reference numbers from M4 on. The M5 Pro (Metal) is a supported device, not a fallback: every exit that runs a model on a GPU is shown on both, and the scaled-down profile has a baseline on each. Hosted CI has no GPU, so GPU evidence comes from runs on these two machines, pasted into the PR.
+- **J. ZSTD through libzstd.** Settled at M3. The shards are ZSTD-compressed; `bin/prepare` decompresses with the system's libzstd through a ~30-line binding, used by no other program. A pure-Crystal decoder (over 1,000 lines) and a Python conversion (against Decision F) were the alternatives.
 
 ## Risks
 
