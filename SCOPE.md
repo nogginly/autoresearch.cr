@@ -25,7 +25,7 @@ These are the parts that make a result mean something, so they are kept exact:
 ## What may differ
 
 - **Precision.** `F32` until tensomite computes in BF16. Differences from the original's autocast are expected and recorded, not hidden.
-- **Speed and scale.** Tensomite computes on CUDA cores, without tensor cores or fused attention, and caps one tensor at about 2 GiB. The reference size (depth 8, sequence 2,048) may not fit or may be slow; a scaled-down profile is a supported configuration, not a failure.
+- **Speed and scale.** Tensomite computes on CUDA cores, without tensor cores or fused attention, and caps one tensor at 8 GiB. The reference size (depth 8, sequence 2,048) may not fit or may be slow; a scaled-down profile is a supported configuration, not a failure.
 - **Absolute `val_bpb`.** The port's numbers are comparable between experiments on one machine, not with Karpathy's published 0.998.
 - **Tooling.** Data preparation is a Crystal tool in this repo. Python is used only for generating reference fixtures, never to run an experiment.
 
@@ -56,7 +56,7 @@ These are the parts that make a result mean something, so they are kept exact:
 
 ## Dependencies
 
-- `tensomite` 0.8.1 or later. It provides optimizer groups and the `updates` hook, the elementwise helpers, per-token cross-entropy, weightless RMSNorm, the BPE pattern option and a `tiktoken` converter, and collects modules held in a `Hash`.
+- `tensomite` 0.8.2 or later. It provides optimizer groups and the `updates` hook, the elementwise helpers, per-token cross-entropy, weightless RMSNorm, the BPE pattern option and a `tiktoken` converter, and collects modules held in a `Hash`.
 - Open in tensomite's M14, and not blocking a scaled-down port: 64-bit sizes, fused windowed attention for training, BF16 compute, fused cross-entropy, and a device memory high-water mark (new; needed for `peak_vram_mb`).
 - Crystal 1.22 or later; OpenBLAS on Linux.
 - PyTorch, only to regenerate fixtures.

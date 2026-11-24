@@ -33,13 +33,15 @@ Green is the one file the agent may change. Orange is the library this project e
 ```
 train.cr                   the editable file: constants, model, optimizer, loop, main
 src/autoresearch/
-  constants.cr             fixed: sequence length, time budget, eval tokens, vocabulary, paths
-  shards.cr                fixed: token shard format, reader
+  constants.cr             fixed: sequence length, time budget, eval tokens, vocabulary, pattern, cache paths
+  shards.cr                fixed: token shard format, reader and writer
+  tokenizer.cr             fixed: the trained tokenizer and token byte lengths
   dataloader.cr            fixed: best-fit packing, train and validation split
-  evaluate.cr              fixed: evaluate_bpb
+  evaluate.cr              fixed: evaluate_bpb (M4)
 tools/
   prepare.cr               the prepare tool's commands
-  prepare/                 fetch, parquet, bpe_trainer, tokenize
+  prepare/                 fetch, train_tokenizer, tokenize; parquet, thrift, zstd; bpe_trainer, tokenizer_files
+  batch_digests.cr         digests of the first batches, for make check-data
 scripts/fixtures/          Python: makes the reference fixtures (the only Python here)
 bench/                     benchmarks, such as the optimizer step against a training step
 spec/                      parity specs and fixtures
@@ -47,7 +49,7 @@ spikes/                    the spike, until absorbed (see PLAN.md)
 program.md                 the agent's instructions
 ```
 
-Two binaries come out of `make build`: `bin/prepare` and `bin/train`. The split of `train.cr` from `src/autoresearch/` is the original's split of `train.py` from `prepare.py`, and `program.md` tells the agent the same rules: edit the one, never the other.
+Two programs come out of `make build` for use, `bin/prepare` and `bin/train`, beside `bin/batch_digests` for checking and the spike. The split of `train.cr` from `src/autoresearch/` is the original's split of `train.py` from `prepare.py`, and `program.md` tells the agent the same rules: edit the one, never the other.
 
 ## Behaviours of the original to preserve
 
@@ -83,20 +85,37 @@ These come from reading `train.py` and `prepare.py`; each is a place a port can 
 Memory and speed follow from three tensomite behaviours the loop must respect:
 
 - **Tensors are lazy and immutable.** A step realises the loss and gradients together. With gradient accumulation, each micro-batch's gradients are realised with `release: true` before the next begins, then summed; otherwise every micro-batch's activations stay alive. The spike confirmed this works and matches a single large batch.
-- **A tensor is limited to 2 GiB** until tensomite moves to 64-bit sizes. The reference micro-batch of 128 makes an 8.6 GB logits tensor, so the reference profile uses 16 sequences per micro-batch or fewer.
+- **A tensor is limited to 8 GiB.** The reference micro-batch of 128 makes a logits tensor of exactly 8 GiB (128 × 2,048 × 8,192 floats), at the limit, so the reference profile uses 64 sequences per micro-batch or fewer.
 - **Windowed attention is a mask** until tensomite has fused training attention. It computes the full `T×T` scores, so memory and time grow with `T²`; the scaled-down profile's shorter sequence avoids the cost.
 
 ## Data
 
-`prepare` has three commands that mirror `prepare.py`'s steps, each resumable:
+`prepare` has three commands that mirror `prepare.py`'s steps, each resumable. Everything goes under the cache directory, `AUTORESEARCH_CACHE` or `~/.cache/autoresearch.cr`: `data/` for Parquet shards, `tokenizer/`, and `tokens/`.
 
-1. `fetch`: downloads Parquet shards to the cache directory, in parallel, with retries and atomic renames; the last shard is the validation set.
-2. `train-tokenizer`: reads the text column, trains BPE with the original's pattern and special tokens, and writes a tokenizer in tensomite's `tokenizer.json` form plus a table of byte lengths per token.
-3. `tokenize`: encodes every document with tensomite's `BPE`, prepends BOS, and writes token shards: a header, a document-offset index and `UInt16` tokens.
+```mermaid
+flowchart LR
+    HF["Hugging Face: shard_NNNNN.parquet"] -->|fetch| P["data/*.parquet"]
+    P -->|train-tokenizer| T["tokenizer/tokenizer.json, token_bytes.json"]
+    P -->|tokenize| S["tokens/*.tokens"]
+    T -->|tokenize| S
+    S --> L["Dataloader (train.cr)"]
+```
 
-Tokenising ahead of time is a departure from the original, which tokenises while training. It keeps Parquet and the trainer out of the training binary, so the agent's rebuilds stay short, and it takes tokenisation off the training path. The fixtures check that the ids equal the original's.
+1. `fetch` downloads the first `--num-shards` training shards (10 by default) and the validation shard, 8 at a time. It retries each up to 5 times, writes to `.tmp` and renames, and skips shards already present.
+2. `train-tokenizer` takes the training shards' documents in order, each cut to 10,000 characters, until 1 billion characters. It counts the chunks the split pattern makes, and trains 7,932 merges as `rustbpe` 0.1.0 does: the most frequent pair first, ties to the smaller pair, left to right without overlap. It writes `tokenizer.json`, which tensomite's `BPE.from_json` reads, and `token_bytes.json`, each token's UTF-8 length after decoding with errors replaced, as `prepare.py` measures it (a lone `0x80` counts 3).
+3. `tokenize` encodes every document with tensomite's `BPE`, special tokens as text, BOS first, and writes one token shard per Parquet shard (`Autoresearch::TokenShard`): a header, documents per row group, document offsets, `UInt16` tokens.
 
-The dataloader memory-maps the shards, keeps a buffer of documents, applies best-fit packing and prefetches the next batch in a fiber. It is seeded and deterministic.
+**The shards' layout.** Inspected at M3, shards 0 and 6542 hold one optional string column, `text`, written by Arrow 21. Each row group (1,024 rows) has one ZSTD-compressed v1 data page of PLAIN byte arrays, with no dictionary and no nulls. The reader handles that layout and raises, naming what it met, for anything else, so a shard laid out differently fails loudly. ZSTD comes from the system's libzstd through a small binding (Decision J), used only by `bin/prepare`.
+
+**Tokenising ahead of time** is a departure from the original, which tokenises while training. It keeps Parquet, ZSTD and the trainer out of the training binary, so the agent's rebuilds stay short, and it takes tokenisation off the training path. The fixtures check that the ids equal the original's.
+
+**The dataloader** memory-maps the token shards and packs rows exactly as `make_dataloader` does:
+- It refills a buffer of documents to at least 1,000, in batches of up to 128 that never cross a Parquet row group. That is why token shards keep the row groups.
+- Each row starts with a document's BOS, and takes the longest buffered document that fits the space left, the first on ties.
+- When nothing fits, it crops the shortest document and drops the rest of it.
+- When the shards run out, a new epoch starts.
+
+It is deterministic and builds each batch on demand. It does not prefetch yet; M4 adds that if the loader shows in a profile.
 
 ## Evaluation
 

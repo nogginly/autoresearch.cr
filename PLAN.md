@@ -20,6 +20,7 @@ Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensom
 |---|---|---|---|
 | A `Module` silently ignores children held in a `Hash`, so a keyed collection such as `train.py`'s `value_embeds` cannot be expressed | M1 | [#188](https://github.com/nogginly/tensomite.cr/issues/188), fixed in 0.8.1 | none: `value_embeds` is a `Hash` keyed by layer, and every parameter has `train.py`'s name |
 | Listing a child module's parameters (`child.params`) renames the shared `Parameter`s relative to that child, until the root lists them again | M2 | to report | `GPT` selects parameters by name prefix from the root (`params_named`) |
+| `Unview` sums serially on CUDA and Metal when a small tensor is broadcast over a large one: the per-layer scalars' gradients take 94% of a GB10 training step and 87% on the M5 Pro | before M3 (`make profile`) | [#192](https://github.com/nogginly/tensomite.cr/issues/192), fixed in 0.8.2 | none |
 
 | Here | Original key | Tensomite |
 |---|---|---|
@@ -153,6 +154,7 @@ Lettered as in tensomite; each is recorded here when made.
 - **G. `F32` until tensomite has BF16 compute.** Settled. Fixtures are made in `F32` with the original's BF16 casts removed.
 - **H. Profiles.** Open. A `reference` profile (depth 8, sequence 2,048, vocabulary 8,192) and a scaled-down one chosen at M4 (candidates: the same data with sequence 512 and depth 4; or a smaller dataset). A profile is a compile-time flag that picks a constants set, with its own cache directory.
 - **I. Reference machines.** Settled. The GB10 (DGX Spark, CUDA) carries long runs and the reference numbers from M4 on. The M5 Pro (Metal) is a supported device, not a fallback: every exit that runs a model on a GPU is shown on both, and the scaled-down profile has a baseline on each. Hosted CI has no GPU, so GPU evidence comes from runs on these two machines, pasted into the PR.
+- **J. ZSTD through libzstd.** Settled at M3. The shards are ZSTD-compressed; `bin/prepare` decompresses with the system's libzstd through a ~30-line binding, used by no other program. A pure-Crystal decoder (over 1,000 lines) and a Python conversion (against Decision F) were the alternatives.
 
 ## Risks
 
@@ -164,4 +166,4 @@ Lettered as in tensomite; each is recorded here when made.
 | Crystal rebuilds add to every experiment | Fewer cycles overnight | Tensomite's measurement says acceptable; keep `train.cr` free of heavy macros; `--release` for runs |
 | Agent unfamiliar with tensomite's API | Wasted cycles on compile errors | Cheat-sheet in `program.md`; the M5 write-up feeds it |
 | Upstream M14 slips | M6 blocked | M6 is a stretch; M0 to M5 deliver the project |
-| Tensomite is young and one-maintainer | API churn | Pin `~> 0.8.1`; upgrade deliberately |
+| Tensomite is young and one-maintainer | API churn | Pin `~> 0.8.2`; upgrade deliberately |

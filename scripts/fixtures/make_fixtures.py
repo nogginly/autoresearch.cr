@@ -22,6 +22,19 @@ gradients, with train.py's hyperparameters and schedules:
   expected.json         provenance, the hyperparameters, the optimizer's groups
                         as setup_optimizer makes them, and each step's inputs
                         to the schedules and the values they returned
+
+and to FIXTURES_DIR/data, a small dataset in the climbmix shards' layout and
+what prepare.py makes of it, with its own train_tokenizer, Tokenizer and
+make_dataloader (the dataloader patched to stay on the CPU):
+
+  parquet/              three Parquet shards, ZSTD, PLAIN, v1 pages, of
+                        documents sampled from the original's own files (MIT)
+  expected.json         provenance, the row groups, the tokenizer's ranks (the
+                        bytes of each token, hex) and token byte lengths, and
+                        each document's token ids, BOS first, as a SHA-256 of
+                        little-endian int32s, with the first documents' ids
+  batches.safetensors   train.<k>.inputs and .targets for the first train
+                        batches, val.<k>.* likewise, I32 [B, T]
 """
 
 import hashlib
@@ -289,6 +302,127 @@ def make_optimizer(model, hyperparameters, schedules, out_dir):
     print(f"{len(steps)} optimizer steps; wrote {out_dir}")
 
 
+DATA_SEED = 7
+DATA_FILES = [("shard_00000.parquet", 700), ("shard_00001.parquet", 700), ("shard_06542.parquet", 300)]
+DATA_ROW_GROUP = 300
+DATA_CORPUS = ["README.md", "program.md", "prepare.py", "train.py"]
+DATA_UNICODE = [
+    "Unicode: 你好，世界。こんにちは 안녕하세요 Привет мир",
+    "Emoji 👩🏽‍💻🚀✨ and combining e\u0301 a\u0308",
+    "Spaces: no-break\u00a0space, ideographic\u3000space, line\u2028separator, next\u0085line",
+    "Numbers 1 12 123 1234 12345 ١٢٣ ⅫⅩ and 3.14159",
+    "Contractions: don't I'LL we've they're it's DON'T",
+    "Tabs\tand\r\nCRLF\n\n\nnewlines   trailing   ",
+    "Special-looking text: <|reserved_0|> <|reserved_3|> stays text",
+]
+LOADER_TRAIN = (4, 512, 120)
+LOADER_VAL = (4, 512, 8)
+
+DATA_PATCHES = [
+    ("pin_memory=True", "pin_memory=False", "the dataloader's host buffer is not pinned (there is no GPU)", 1),
+    ('gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cuda")',
+     'gpu_buffer = torch.empty(2 * B * T, dtype=torch.long, device="cpu")', "the dataloader's batches stay on the CPU", 1),
+]
+
+
+def int32_sha(ids):
+    import struct
+    return hashlib.sha256(struct.pack(f"<{len(ids)}i", *ids)).hexdigest()
+
+
+def make_data(source_dir, out_dir):
+    """Writes a small dataset in the shards' layout, and prepare.py's tokenizer, ids and batches for it."""
+    import random
+    import tempfile
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    # 1. prepare.py, patched as DATA_PATCHES says, with its directories moved to a scratch cache.
+    prepare_path = os.path.join(source_dir, "prepare.py")
+    check_sha256(prepare_path, PREPARE_SHA256)
+    code = open(prepare_path).read()
+    for old, new, _, occurrences in DATA_PATCHES:
+        count = code.count(old)
+        if count != occurrences:
+            sys.exit(f"patch target occurs {count} times, not {occurrences}: {old!r}")
+        code = code.replace(old, new)
+    prepare = {"__name__": "autoresearch_prepare", "__file__": prepare_path}
+    exec(compile(code, prepare_path, "exec"), prepare)
+    scratch = tempfile.mkdtemp()
+    prepare["DATA_DIR"] = os.path.join(scratch, "data")
+    prepare["TOKENIZER_DIR"] = os.path.join(scratch, "tokenizer")
+    os.makedirs(prepare["DATA_DIR"])
+
+    # 2. Documents: windows of the original's own files, some with Unicode samples, three over 10,000 characters.
+    corpus = "\n\n".join(open(os.path.join(source_dir, name)).read() for name in DATA_CORPUS)
+    rng = random.Random(DATA_SEED)
+    docs = []
+    total = sum(n for _, n in DATA_FILES)
+    for i in range(total):
+        size = 12_000 if i in (5, 650, 1405) else int(math.exp(rng.uniform(math.log(20), math.log(3000))))
+        start = rng.randrange(0, len(corpus) - size)
+        doc = corpus[start:start + size]
+        if i % 10 == 3:
+            doc = doc + " " + DATA_UNICODE[(i // 10) % len(DATA_UNICODE)]
+        docs.append(doc)
+
+    # 3. The shards, laid out as the real ones are.
+    os.makedirs(os.path.join(out_dir, "parquet"), exist_ok=True)
+    at = 0
+    row_groups = {}
+    for name, n in DATA_FILES:
+        table = pa.table({"text": pa.array(docs[at:at + n], type=pa.string())})
+        for path in (os.path.join(out_dir, "parquet", name), os.path.join(prepare["DATA_DIR"], name)):
+            pq.write_table(table, path, compression="zstd", row_group_size=DATA_ROW_GROUP, use_dictionary=False,
+                           data_page_version="1.0", write_statistics=False)
+        row_groups[name] = [pq.ParquetFile(path).metadata.row_group(g).num_rows for g in range(pq.ParquetFile(path).num_row_groups)]
+        at += n
+
+    # 4. prepare.py's tokenizer, its ids for every document, and its batches.
+    prepare["train_tokenizer"]()
+    tokenizer = prepare["Tokenizer"].from_directory(prepare["TOKENIZER_DIR"])
+    enc = tokenizer.enc
+    ranks = sorted(enc._mergeable_ranks.items(), key=lambda item: item[1])
+    token_bytes = prepare["get_token_bytes"]().tolist()
+    bos = tokenizer.get_bos_token_id()
+    ids = tokenizer.encode(docs, prepend=bos)
+    tensors = {}
+    epochs = {}
+    for split, (b, t, steps) in (("train", LOADER_TRAIN), ("val", LOADER_VAL)):
+        loader = prepare["make_dataloader"](tokenizer, b, t, split)
+        epochs[split] = []
+        for k in range(steps):
+            x, y, epoch = next(loader)
+            tensors[f"{split}.{k}.inputs"] = x.to(torch.int32).clone()
+            tensors[f"{split}.{k}.targets"] = y.to(torch.int32).clone()
+            epochs[split].append(epoch)
+    save_file(tensors, os.path.join(out_dir, "batches.safetensors"))
+
+    meta = dict(
+        source="https://github.com/karpathy/autoresearch",
+        commit=COMMIT,
+        corpus=f"windows of {', '.join(DATA_CORPUS)} at the commit (MIT licence), with Unicode samples",
+        substitutions=[reason for _, _, reason, _ in DATA_PATCHES],
+        files=[name for name, _ in DATA_FILES],
+        row_groups=row_groups,
+        vocab_size=enc.n_vocab,
+        bos=bos,
+        ranks=[token.hex() for token, _ in ranks],
+        token_bytes=token_bytes,
+        document_ids_sha256=[int32_sha(x) for x in ids],
+        first_document_ids=ids[:5],
+        loaders={split: dict(batch=b, sequence=t, steps=steps, epochs=epochs[split])
+                 for split, (b, t, steps) in (("train", LOADER_TRAIN), ("val", LOADER_VAL))},
+    )
+    with open(os.path.join(out_dir, "expected.json"), "w") as f:
+        json.dump(meta, f, indent=1)
+        f.write("\n")
+    import shutil
+    shutil.rmtree(scratch)
+    print(f"{len(docs)} documents, {len(ranks)} ranked tokens, {sum(map(len, ids))} tokens; wrote {out_dir}")
+
+
 def main():
     source_dir, fixtures_dir = sys.argv[1], sys.argv[2]
     torch.use_deterministic_algorithms(True)
@@ -296,6 +430,7 @@ def main():
     ns, hyperparameters, build_model_config, schedules = load_original(source_dir)
     model = make_model(ns, build_model_config, os.path.join(fixtures_dir, "model"))
     make_optimizer(model, hyperparameters, schedules, os.path.join(fixtures_dir, "optimizer"))
+    make_data(source_dir, os.path.join(fixtures_dir, "data"))
 
 
 if __name__ == "__main__":

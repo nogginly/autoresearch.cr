@@ -24,9 +24,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install OpenBLAS (Linux)
+      - name: Install OpenBLAS and libzstd (Linux)
         if: ${{ runner.os == 'Linux' }}
-        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev
+        run: sudo apt-get update && sudo apt-get install -y libopenblas-dev libzstd-dev
+
+      - name: Install zstd (macOS)
+        if: ${{ runner.os == 'macOS' }}
+        run: brew install zstd pkgconf
 
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1

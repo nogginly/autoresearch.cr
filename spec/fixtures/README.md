@@ -49,3 +49,20 @@ The schedules' inputs, `(progress, step)`, are `(0, 0)`, `(0.3, 75)`, `(0.55, 15
 |---|---|
 | `tensors.safetensors` | `initial.<name>`; `grad.<k>.<name>` for steps 1 to 5; `after1.<name>` and `after5.<name>`; all in PyTorch's layout |
 | `expected.json` | provenance, the hyperparameters, the groups as `setup_optimizer` makes them (before any step), each step's schedule inputs and outputs, and the substitutions |
+
+## `data/`
+
+A small dataset in the climbmix shards' layout, and what `prepare.py` makes of it. It uses `prepare.py`'s own `train_tokenizer`, `Tokenizer`, `get_token_bytes` and `make_dataloader`, with its directories pointed at a scratch cache. The dataloader is patched to stay on the CPU: its host buffer is not pinned, and its batches are not moved to CUDA.
+
+**Documents.** There are 1,700 windows of the original's own `README.md`, `program.md`, `prepare.py` and `train.py` at the pinned commit (MIT licence). Their lengths are log-uniform between 20 and 3,000 characters, and three run to 12,000, which exercises the 10,000-character cut. Every tenth document gains a Unicode sample: CJK, emoji, combining marks, no-break and ideographic spaces, U+2028 and U+0085, Arabic digits, contractions, CRLF and look-alikes of the special tokens.
+
+**Shards.** `shard_00000` and `shard_00001` (700 documents each) are the training split, and `shard_06542` (300) is the validation split. They are written by pyarrow as the real shards are: ZSTD, PLAIN, v1 pages, no dictionary, no statistics. Row groups are 300 documents, so the dataloader's batches of 128 end short (128, 128, 44).
+
+| File | Contents |
+|---|---|
+| `parquet/` | the three shards |
+| `expected.json` | provenance; row groups; the tokenizer's 5,243 ranked tokens (hex bytes), vocabulary size and BOS id; each token's byte length; each document's ids, BOS first, as the SHA-256 of little-endian int32s, with the first five in full; each loader's batch, sequence, steps and epochs |
+| `batches.safetensors` | `train.<k>.inputs` and `.targets` for 120 batches of 4 × 512, and `val.<k>.*` for 8; I32 |
+
+The training split is shorter than 120 batches of 2,052 tokens, so they cross into epoch 2. The validation split is smaller than the 1,000-document buffer, so its first batch already reports epoch 4. On so small a corpus, training runs out of pairs after 4,987 merges, which exercises the trainer's early stop.
+

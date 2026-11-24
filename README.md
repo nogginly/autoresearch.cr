@@ -8,13 +8,20 @@ See [SCOPE.md](SCOPE.md) for the goal and requirements, [PLAN.md](PLAN.md) for t
 
 ## Status
 
-Milestone M0 (foundation). There is no `train` or `prepare` yet. What builds and runs is the spike, `spikes/gpt_spike.cr`: a 4-layer, 0.9 M-parameter model with the original's structure and a MuonAdamW optimizer, trained on a synthetic token stream. It shows the pieces run on tensomite; later milestones check them against the original.
+Milestones M0 to M3 are done; the training loop and metric (M4) are next. What works today:
+
+- **`bin/prepare`** downloads the dataset, trains the tokenizer and writes token shards. Its tokenizer, token ids and batches match `prepare.py`'s.
+- **`train.cr`** holds the model and the MuonAdamW optimizer. Both match `train.py` within measured tolerances, on BLAS, CUDA and Metal. `bin/train` builds the model and prints its size; it does not train yet.
 
 ## Quick start
 
-1. Install Crystal 1.22 or later. On Linux, also install OpenBLAS:
+1. Install Crystal 1.22 or later. On Linux, also install OpenBLAS and libzstd:
    ```bash
-   sudo apt-get install libopenblas-dev
+   sudo apt-get install libopenblas-dev libzstd-dev
+   ```
+   On macOS:
+   ```bash
+   brew install zstd pkgconf
    ```
 2. Install the shards and build the linter:
    ```bash
@@ -24,15 +31,19 @@ Milestone M0 (foundation). There is no `train` or `prepare` yet. What builds and
    ```bash
    make test
    ```
-4. Build the spike (a release build, about 30 s):
+4. Build the programs (release builds, about a minute):
    ```bash
    make build
    ```
-5. Train it for 200 steps:
+5. Prepare the data. This downloads about 1 GB, then trains and tokenizes for about 5 minutes on four cores:
    ```bash
-   bin/gpt_spike 200
+   bin/prepare
    ```
-   It prints the parameter count, the loss every 20 steps (from about 5.54 down to below 0.01) and the time taken. `bin/gpt_spike 200 accum` takes the same steps with gradient accumulation over two micro-batches, and should print the same losses to the shown precision.
+   It fetches 10 training shards and the validation shard, trains the tokenizer and writes token shards, all under `~/.cache/autoresearch.cr` (or `AUTORESEARCH_CACHE`). Run it again and it skips what is done.
+6. Print the model's size:
+   ```bash
+   bin/train
+   ```
 
 ## Contributions
 
