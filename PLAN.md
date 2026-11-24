@@ -20,6 +20,7 @@ Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensom
 |---|---|---|---|
 | A `Module` silently ignores children held in a `Hash`, so a keyed collection such as `train.py`'s `value_embeds` cannot be expressed | M1 | [#188](https://github.com/nogginly/tensomite.cr/issues/188), fixed in 0.8.1 | none: `value_embeds` is a `Hash` keyed by layer, and every parameter has `train.py`'s name |
 | Listing a child module's parameters (`child.params`) renames the shared `Parameter`s relative to that child, until the root lists them again | M2 | to report | `GPT` selects parameters by name prefix from the root (`params_named`) |
+| `Unview` sums serially on CUDA and Metal when a small tensor is broadcast over a large one: the per-layer scalars' gradients take 94% of a GB10 training step and 87% on the M5 Pro | before M3 (`make profile`) | [#192](https://github.com/nogginly/tensomite.cr/issues/192) | none; training-speed numbers wait for the fix |
 
 | Here | Original key | Tensomite |
 |---|---|---|
