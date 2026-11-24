@@ -67,7 +67,7 @@ Runs that measure anything use a release build. On a 2-core container `--release
 
 ## Devices
 
-A device is where tensomite stores tensors and runs kernels. Tensomite is `F32`-only for now, and one tensor is limited to 2 GiB.
+A device is where tensomite stores tensors and runs kernels. Tensomite is `F32`-only for now, and one tensor is limited to 8 GiB.
 
 | Device | What it is | Use here |
 |---|---|---|

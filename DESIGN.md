@@ -85,7 +85,7 @@ These come from reading `train.py` and `prepare.py`; each is a place a port can 
 Memory and speed follow from three tensomite behaviours the loop must respect:
 
 - **Tensors are lazy and immutable.** A step realises the loss and gradients together. With gradient accumulation, each micro-batch's gradients are realised with `release: true` before the next begins, then summed; otherwise every micro-batch's activations stay alive. The spike confirmed this works and matches a single large batch.
-- **A tensor is limited to 2 GiB** until tensomite moves to 64-bit sizes. The reference micro-batch of 128 makes an 8.6 GB logits tensor, so the reference profile uses 16 sequences per micro-batch or fewer.
+- **A tensor is limited to 8 GiB.** The reference micro-batch of 128 makes a logits tensor of exactly 8 GiB (128 × 2,048 × 8,192 floats), at the limit, so the reference profile uses 64 sequences per micro-batch or fewer.
 - **Windowed attention is a mask** until tensomite has fused training attention. It computes the full `T×T` scores, so memory and time grow with `T²`; the scaled-down profile's shorter sequence avoids the cost.
 
 ## Data
