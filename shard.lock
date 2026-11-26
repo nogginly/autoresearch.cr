@@ -6,5 +6,5 @@ shards:
 
   tensomite:
     git: https://github.com/nogginly/tensomite.cr.git
-    version: 0.8.2
+    version: 0.8.3
 
