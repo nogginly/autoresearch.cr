@@ -28,7 +28,7 @@ Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensom
 | M1 Reference fixtures and the model | A-01, A-02 | |
 | M2 The optimizer | A-03 | G-02, G-03 (done in 0.8.0) |
 | M3 Data tools and the dataloader | D-02 to D-05 | D-01 (done in 0.8.0) |
-| M4 Training loop and metric | A-04, A-05 | G-05 (done), memory high-water mark (new) |
+| M4 Training loop and metric | A-04, A-05 | G-05 (done), memory high-water mark (done in 0.8.4) |
 | M5 The agent loop | A-06 | G-09 (done) |
 | M6 Reference scale | | G-01, G-07, G-08, fused cross-entropy (M14) |
 
@@ -103,7 +103,7 @@ Exit: token ids for the first documents equal what `prepare.py` produces; tokeni
 1. The loop in `train.cr`: gradient accumulation, time budget excluding the first ten steps, EMA loss, fast fail, the original's per-step line and summary block.
 2. `evaluate_bpb` in the fixed harness, with a parity fixture.
 3. A device flag (`--device cpu|blas|cuda|metal`); apps must choose, as tensomite's `finetune` does.
-4. Peak memory for the summary: ask tensomite for a device high-water mark, and report `0.0` with a note until it exists.
+4. Peak memory for the summary: `device.reset_peak` at the start of the run, `device.peak_live_bytes / 2**20` at the end (tensomite 0.8.4), as `train.py` uses `max_memory_allocated`.
 5. A scaled-down profile (Decision H) with its own baseline numbers.
 
 Exit: a scaled-down run finishes inside its budget on BLAS, the GB10 and the M5 Pro, and prints a block that `program.md`'s greps parse; `val_bpb` on the fixture batch equals the original's to four significant digits; two runs with one seed give identical losses.
@@ -166,4 +166,4 @@ Lettered as in tensomite; each is recorded here when made.
 | Crystal rebuilds add to every experiment | Fewer cycles overnight | Tensomite's measurement says acceptable; keep `train.cr` free of heavy macros; `--release` for runs |
 | Agent unfamiliar with tensomite's API | Wasted cycles on compile errors | Cheat-sheet in `program.md`; the M5 write-up feeds it |
 | Upstream M14 slips | M6 blocked | M6 is a stretch; M0 to M5 deliver the project |
-| Tensomite is young and one-maintainer | API churn | Pin `~> 0.8.3`; upgrade deliberately |
+| Tensomite is young and one-maintainer | API churn | Pin `~> 0.8.4`; upgrade deliberately |
