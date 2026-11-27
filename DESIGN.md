@@ -45,11 +45,10 @@ tools/
 scripts/fixtures/          Python: makes the reference fixtures (the only Python here)
 bench/                     benchmarks, such as the optimizer step against a training step
 spec/                      parity specs and fixtures
-spikes/                    the spike, until absorbed (see PLAN.md)
 program.md                 the agent's instructions
 ```
 
-Two programs come out of `make build` for use, `bin/prepare` and `bin/train`, beside `bin/batch_digests` for checking and the spike. The split of `train.cr` from `src/autoresearch/` is the original's split of `train.py` from `prepare.py`, and `program.md` tells the agent the same rules: edit the one, never the other.
+Two programs come out of `make build` for use, `bin/prepare` and `bin/train`, beside `bin/batch_digests` for checking. The split of `train.cr` from `src/autoresearch/` is the original's split of `train.py` from `prepare.py`, and `program.md` tells the agent the same rules: edit the one, never the other.
 
 ## Behaviours of the original to preserve
 

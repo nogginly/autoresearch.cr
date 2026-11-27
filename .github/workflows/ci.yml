@@ -54,8 +54,3 @@ jobs:
 
       - name: Build
         run: make build
-
-      - name: Run the spike
-        env:
-          OPENBLAS_NUM_THREADS: "1"
-        run: bin/gpt_spike 20

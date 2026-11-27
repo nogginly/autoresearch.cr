@@ -61,9 +61,9 @@ flowchart LR
 
 ## Building
 
-`make build` builds every program in release mode: `bin/train` from `train.cr`, `bin/prepare` and `bin/batch_digests` from `tools/`, and the spike, `bin/gpt_spike`. `CUDA=1` adds the CUDA device; `REFERENCE=1` builds the `reference` profile (`-Dreference`, `MAX_SEQ_LEN` 2,048) in place of the default `small` one (PLAN, Decision H).
+`make build` builds every program in release mode: `bin/train` from `train.cr`, `bin/prepare` and `bin/batch_digests` from `tools/`. `CUDA=1` adds the CUDA device; `REFERENCE=1` builds the `reference` profile (`-Dreference`, `MAX_SEQ_LEN` 2,048) in place of the default `small` one (PLAN, Decision H).
 
-Runs that measure anything use a release build. On a 2-core container `--release` builds the spike in about 27 s and runs it about 2.5 times faster than `-O3`. That build time is part of every experiment the agent runs, so `train.cr` stays free of heavy macros.
+Runs that measure anything use a release build. On a 4-core container, a release build of `bin/train` after an edit to `train.cr` takes about 38 s; an unchanged rebuild hits the cache and takes about 3 s. That build time is part of every experiment the agent runs, so `train.cr` stays free of heavy macros.
 
 ## Devices
 
@@ -202,13 +202,12 @@ shard.lock               pinned dependency versions, committed
 .github/workflows/ci.yml make deps, test and build on Linux and macOS
 ops.yml                  optional ops actions, each a make call
 .claude/agents/          the implementer subagent's definition (see "Working with agents")
-.ameba.yml               lint configuration; lib/, bin/ and spikes/ are excluded
+.ameba.yml               lint configuration; lib/ and bin/ are excluded
 spec/spec_helper.cr      requires train.cr and the devices; DEVICE, GPUS, MODEL_DEVICES, comparison helpers
 spec/*_spec.cr           specs; each milestone's exit has a `describe "Mn exit: …"` block
 spec/fixtures/           committed reference outputs, and their README
 scripts/fixtures/        regenerate.sh, make_fixtures.py and its pinned requirements (the only Python)
 bench/                   benchmarks, run in release mode with `make bench`
-spikes/gpt_spike.cr      the spike, until its pieces are absorbed (PLAN, "Bringing in the spike")
 ```
 
 DESIGN.md's "Repository layout" shows where the rest of `src/autoresearch/` and `tools/` will go.
@@ -220,7 +219,6 @@ DESIGN.md's "Repository layout" shows where the rest of `src/autoresearch/` and 
 - **Comments document the API and its outcomes:** what a type is, what a method returns or does. Inside a function, a comment lists the steps of the algorithm. No history: that goes in commit messages, and in PLAN.md when it matters to future contributors.
 - **Diagrams are Mermaid.**
 - **Library gaps go upstream.** If tensomite lacks something, open an issue there with a minimal reproduction and link it from PLAN.md. Do not work around it here.
-- **The spike stays verbatim.** `spikes/` is excluded from formatting and lint; code that leaves it for `train.cr` meets both.
 
 ### Specs
 

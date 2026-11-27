@@ -108,6 +108,16 @@ Exit: token ids for the first documents equal what `prepare.py` produces; tokeni
 
 Exit: a scaled-down run finishes inside its budget on BLAS, the GB10 and the M5 Pro, and prints a block that `program.md`'s greps parse; `val_bpb` on the fixture batch equals the original's to four significant digits; two runs with one seed give identical losses.
 
+The schedules follow the share of the budget used, as `train.py`'s do, so two runs' losses agree only while their timings do. The first eleven steps are untimed and see the same schedules, so the determinism check compares them exactly.
+
+Baselines, `small` profile, one run each:
+
+| Device | Steps in budget | Final loss | `val_bpb` | `peak_vram_mb` | Evaluation |
+|---|---|---|---|---|---|
+| BLAS (4-core container) | 49 | 5.73 | 2.0147 | 4,010 | 75 min |
+| CUDA, GB10 | | | | | |
+| Metal, M5 Pro | | | | | |
+
 ### M5: The agent loop
 
 1. `program.md` for Crystal: the original's loop, plus the build step, how to read compile errors, and a short tensomite API cheat-sheet.
