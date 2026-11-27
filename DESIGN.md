@@ -134,4 +134,4 @@ The device is chosen by flag: `cpu` is tensomite's naive oracle, kept for parity
 
 ## Open questions
 
-1. The scaled-down profile: dataset, sequence length, depth (Decision H).
+None at present.
