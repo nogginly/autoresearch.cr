@@ -66,3 +66,12 @@ A small dataset in the climbmix shards' layout, and what `prepare.py` makes of i
 
 The training split is shorter than 120 batches of 2,052 tokens, so they cross into epoch 2. The validation split is smaller than the 1,000-document buffer, so its first batch already reports epoch 4. On so small a corpus, training runs out of pairs after 4,987 merges, which exercises the trainer's early stop.
 
+## `eval/`
+
+`prepare.py`'s own `evaluate_bpb`, on a tiny model whose vocabulary is the data fixture's tokenizer (5,247 tokens) and the data fixture's validation shard. `evaluate_bpb` is patched to keep its token byte table on the CPU, its dataloader as in `data/`. The model is 4 layers, width 32, 1 head, sequence 64, window pattern `SLS`, initialised and perturbed as the model fixture's is. `MAX_SEQ_LEN` is 64 and `EVAL_TOKENS` 2,048, so evaluation reads 8 batches of 4 × 64.
+
+| File | Contents |
+|---|---|
+| `weights.safetensors` | the model's parameters, named as in `train.py`, in PyTorch's layout |
+| `expected.json` | provenance, the substitutions, the config, the batch size, `MAX_SEQ_LEN`, `EVAL_TOKENS` and `val_bpb` |
+

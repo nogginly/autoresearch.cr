@@ -1,0 +1,29 @@
+{
+  "source": "https://github.com/karpathy/autoresearch",
+  "commit": "228791fb499afffb54b46200aca536f79142f117",
+  "torch": "2.9.1+cu128",
+  "data": "../data (its tokenizer and validation shard)",
+  "substitutions": [
+    "the dataloader's host buffer is not pinned (there is no GPU)",
+    "the dataloader's batches stay on the CPU",
+    "evaluate_bpb's token byte table stays on the CPU",
+    "FlashAttention 3 needs a Hopper GPU; scaled_dot_product_attention with the same causal sliding-window mask (key j visible from query i when 0 <= i - j <= window) computes the same function",
+    "rotary tables stay float32 (Decision G: F32 until tensomite computes in BF16)",
+    "embeddings stay float32 (Decision G)",
+    "No torch.autocast: every operation runs in float32 on the CPU.",
+    "Weights that train.py initialises to zero (c_proj, mlp.c_proj, ve_gate) are drawn from uniform(-s/2, s/2), lm_head is drawn from normal(0, 1) so that logits reach the softcap's non-linear range, and resid_lambdas and x0_lambdas get per-layer noise, so that every gradient and every per-layer scalar is exercised."
+  ],
+  "config": {
+    "sequence_len": 64,
+    "vocab_size": 5247,
+    "n_layer": 4,
+    "n_head": 1,
+    "n_kv_head": 1,
+    "n_embd": 32,
+    "window_pattern": "SLS"
+  },
+  "batch_size": 4,
+  "max_seq_len": 64,
+  "eval_tokens": 2048,
+  "val_bpb": 5.5506118695541
+}
