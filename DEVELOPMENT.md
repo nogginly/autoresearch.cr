@@ -178,6 +178,7 @@ tools/batch_digests.cr   bin/batch_digests, for make check-data
 shard.lock               pinned dependency versions, committed
 .github/workflows/ci.yml make deps, test and build on Linux and macOS
 ops.yml                  optional ops actions, each a make call
+.claude/agents/          the implementer subagent's definition (see "Working with agents")
 .ameba.yml               lint configuration; lib/, bin/ and spikes/ are excluded
 spec/spec_helper.cr      requires train.cr and the devices; DEVICE, GPUS, MODEL_DEVICES, comparison helpers
 spec/*_spec.cr           specs; each milestone's exit has a `describe "Mn exit: …"` block
@@ -204,6 +205,12 @@ DESIGN.md's "Repository layout" shows where the rest of `src/autoresearch/` and 
 - **Parity specs compare with committed fixtures** made from the PyTorch original, with the tolerance written next to each check and the reason for it: what was measured, and what a broken implementation measured.
 - **A fixture must be able to fail.** Before trusting one, break the code it checks (a sign, an index, an off-by-one) and see the spec fail; if it does not, change the fixture, as the model's did (spec/fixtures/README.md).
 - **Hand-computed expected values** carry their arithmetic in a comment above the assertion, as in `spec/foundation_spec.cr`.
+
+## Working with agents
+
+Coding tasks may be delegated to `.claude/agents/implementer.md`, a subagent on a smaller model than the one directing the work. The agent that delegates keeps the design: it decides what to build, writes a brief naming the files, the change and how it will be accepted, and reviews the result before it goes into a commit. The implementer carries out the brief, runs `make test` and `make build`, and reports. It does not commit or decide.
+
+Delegate when the task is mechanical and the brief is shorter than the work: a spec from stated expected values, a CLI flag, a formatter, a docs table, a bench. Keep in hand parity design, tolerances, diagnosis and anything whose difficulty is judgement. Choose the model per task: the definition's default, `sonnet`, for most; a smaller one for a trivial edit.
 
 ## Contributions
 
