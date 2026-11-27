@@ -5,7 +5,9 @@ SPEC_FLAGS  ?= --order random
 BUILD_FLAGS ?= --release
 CUDA        ?=
 
-DEVICE_FLAGS := $(if $(CUDA),-Dcuda)
+REFERENCE   ?=
+
+DEVICE_FLAGS := $(if $(CUDA),-Dcuda) $(if $(REFERENCE),-Dreference)
 
 FORMAT_PATHS := $(wildcard train.cr src spec tools bench)
 

@@ -1,7 +1,14 @@
 # Fixed constants of the harness, as in `prepare.py`. The agent does not edit this file.
 module Autoresearch
-  # Context length, in tokens.
-  MAX_SEQ_LEN = 2048
+  # The profile's name, and its context length in tokens: `small`'s 512 by
+  # default, `reference`'s 2,048 with `-Dreference` (PLAN.md, Decision H).
+  {% if flag?(:reference) %}
+    MAX_SEQ_LEN = 2048
+    PROFILE     = "reference"
+  {% else %}
+    MAX_SEQ_LEN = 512
+    PROFILE     = "small"
+  {% end %}
 
   # Training time budget, in seconds, not counting start-up.
   TIME_BUDGET = 300

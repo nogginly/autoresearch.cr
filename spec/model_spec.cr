@@ -15,6 +15,12 @@ def expected(name : String) : Array(Float32)
   SafeTensors.open("#{MODEL_FIXTURES}/expected.safetensors")[name].to_a(Float32)
 end
 
+# Returns train.py's config at *depth*. The fixtures were made at the reference
+# profile's 2,048 tokens.
+def reference_config(depth : Int32) : GPTConfig
+  build_model_config(depth).copy_with(sequence_len: 2048)
+end
+
 describe "M1 exit: the model matches train.py" do
   MODEL_DEVICES.each do |device|
     describe "on #{device.class.name}" do
@@ -58,19 +64,19 @@ describe "M1 exit: the model matches train.py" do
   end
 
   it "counts the same parameters as train.py at depth 8" do
-    model = GPT.new(build_model_config(8), DEVICE)
+    model = GPT.new(reference_config(8), DEVICE)
     expected = model_meta["depth8"]["num_scaling_params"].as_h.transform_values(&.as_i64)
     model.num_scaling_params.should eq expected
   end
 
   it "estimates the same FLOPs per token as train.py at depth 8" do
-    model = GPT.new(build_model_config(8), DEVICE)
+    model = GPT.new(reference_config(8), DEVICE)
     model.estimate_flops.should eq model_meta["depth8"]["estimate_flops"].as_i64
   end
 
   it "builds train.py's depth-8 config" do
     c = model_meta["depth8"]["config"]
-    config = build_model_config(8)
+    config = reference_config(8)
     {config.sequence_len, config.vocab_size, config.n_layer, config.n_head, config.n_kv_head, config.n_embd, config.window_pattern}
       .should eq({c["sequence_len"].as_i, c["vocab_size"].as_i, c["n_layer"].as_i, c["n_head"].as_i, c["n_kv_head"].as_i, c["n_embd"].as_i, c["window_pattern"].as_s})
   end

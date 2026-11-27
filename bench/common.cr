@@ -1,22 +1,12 @@
 # Shared by the benchmarks: the devices this build has, and a model to run on them.
 require "../train"
-{% if flag?(:darwin) && flag?(:aarch64) %}
-  require "tensomite/metal"
-{% end %}
-{% if flag?(:cuda) %}
-  require "tensomite/cuda"
-{% end %}
+require "../src/autoresearch/device"
 
 # Returns the device named *name*, or aborts naming those this build has.
 def pick_device(name : String) : Device
-  return BLAS.default if name == "blas"
-  {% if flag?(:darwin) && flag?(:aarch64) %}
-    return Metal.default if name == "metal"
-  {% end %}
-  {% if flag?(:cuda) %}
-    return CUDA.default if name == "cuda"
-  {% end %}
-  abort "unknown or unavailable device #{name}: use blas, metal (Apple Silicon) or cuda (a -Dcuda build)"
+  Autoresearch.device(name)
+rescue ex : ArgumentError
+  abort ex.message
 end
 
 # Returns `build_model_config(depth)` with *sequence_len* in place of `MAX_SEQ_LEN`.
