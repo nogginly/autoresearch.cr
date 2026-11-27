@@ -61,7 +61,7 @@ flowchart LR
 
 ## Building
 
-`make build` builds every program in release mode: `bin/train` from `train.cr`, and the spike, `bin/gpt_spike`. At M1 `bin/train` builds the depth-8 model and prints its configuration, parameter counts and FLOPs per token, as `train.py` does before it trains; the loop arrives in M4, and `bin/prepare` in M3.
+`make build` builds every program in release mode: `bin/train` from `train.cr`, `bin/prepare` and `bin/batch_digests` from `tools/`, and the spike, `bin/gpt_spike`. `CUDA=1` adds the CUDA device; `REFERENCE=1` builds the `reference` profile (`-Dreference`, `MAX_SEQ_LEN` 2,048) in place of the default `small` one (PLAN, Decision H).
 
 Runs that measure anything use a release build. On a 2-core container `--release` builds the spike in about 27 s and runs it about 2.5 times faster than `-O3`. That build time is part of every experiment the agent runs, so `train.cr` stays free of heavy macros.
 
@@ -81,9 +81,32 @@ A device is where tensomite stores tensors and runs kernels. Tensomite is `F32`-
 - on the M5 Pro: `make spec`, whose output names `on Tensomite::Metal`
 - on the GB10: `make spec CUDA=1`, whose output names `on Tensomite::CUDA`
 
-`train` hard-codes `BLAS` until it takes `--device cpu|blas|cuda|metal` (PLAN M4); so does the spike.
+`bin/train` and the benchmarks take the device by name (`Autoresearch.device`, `src/autoresearch/device.cr`): `--device blas`, `metal` on Apple Silicon, or `cuda` in a `CUDA=1` build. The spike hard-codes `BLAS`.
 
 **High system time is OpenBLAS, not the collector.** OpenBLAS's worker threads busy-wait between calls, so `time` reports several times the wall time as `user` and `sys`. `OPENBLAS_NUM_THREADS=1` removes it, at little cost for models this small.
+
+## Training
+
+`bin/train --device NAME` runs `train.cr` as `train.py` runs: it builds the model from `DEPTH`, trains for `TIME_BUDGET` seconds of wall clock (the first ten steps not counted), evaluates `val_bpb` on the validation token shards, and prints the summary block:
+
+```
+---
+val_bpb:          …
+training_seconds: …
+total_seconds:    …
+peak_vram_mb:     …
+mfu_percent:      …
+total_tokens_M:   …
+num_steps:        …
+num_params_M:     …
+depth:            …
+profile:          small
+device:           cuda
+```
+
+The first nine lines are the original's, in its format; `profile` and `device` follow, so every result says what it was measured on. `peak_vram_mb` is the device's `peak_live_bytes`, as `train.py` reports `max_memory_allocated`. `mfu_percent` is computed against the H100's BF16 peak, as `train.py` computes it, so it is comparable with the original's and says nothing about the device's own peak. A loss that is NaN or above 100 prints `FAIL` and exits with status 1.
+
+It needs `bin/prepare`'s cache (`AUTORESEARCH_CACHE` or `~/.cache/autoresearch.cr`).
 
 ## Benchmarks
 
