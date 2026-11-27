@@ -135,4 +135,3 @@ The device is chosen by flag: `cpu` is tensomite's naive oracle, kept for parity
 ## Open questions
 
 1. The scaled-down profile: dataset, sequence length, depth (Decision H).
-2. Whether `peak_vram_mb` waits for a tensomite memory high-water mark or reports process memory meanwhile.

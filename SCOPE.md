@@ -56,8 +56,8 @@ These are the parts that make a result mean something, so they are kept exact:
 
 ## Dependencies
 
-- `tensomite` 0.8.3 or later. It provides optimizer groups and the `updates` hook, the elementwise helpers, per-token cross-entropy, weightless RMSNorm, the BPE pattern option and a `tiktoken` converter, and collects modules held in a `Hash`.
-- Open in tensomite's M14, and not blocking a scaled-down port: 64-bit sizes, fused windowed attention for training, BF16 compute, fused cross-entropy, and a device memory high-water mark (new; needed for `peak_vram_mb`).
+- `tensomite` 0.8.4 or later. It provides optimizer groups and the `updates` hook, the elementwise helpers, per-token cross-entropy, weightless RMSNorm, the BPE pattern option, a `tiktoken` converter, a device memory high-water mark (`peak_live_bytes`, for `peak_vram_mb`), and collects modules held in a `Hash`.
+- Open in tensomite's M14, and not blocking a scaled-down port: 64-bit sizes, fused windowed attention for training, BF16 compute, and fused cross-entropy.
 - Crystal 1.22 or later; OpenBLAS on Linux.
 - PyTorch, only to regenerate fixtures.
 
