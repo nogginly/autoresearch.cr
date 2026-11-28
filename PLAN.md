@@ -115,7 +115,7 @@ Baselines, `small` profile, one run each:
 | Device | Steps in budget | Final loss | `val_bpb` | `peak_vram_mb` | Evaluation |
 |---|---|---|---|---|---|
 | BLAS (4-core container) | 49 | 5.73 | 2.0147 | 4,010 | 75 min |
-| CUDA, GB10 | | | | | |
+| CUDA, GB10 | 1,017 | 3.84 | 1.3758 | 4,049 | under 107 s |
 | Metal, M5 Pro | | | | | |
 
 ### M5: The agent loop
