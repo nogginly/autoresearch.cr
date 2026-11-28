@@ -35,6 +35,14 @@ make_dataloader (the dataloader patched to stay on the CPU):
                         little-endian int32s, with the first documents' ids
   batches.safetensors   train.<k>.inputs and .targets for the first train
                         batches, val.<k>.* likewise, I32 [B, T]
+
+and to FIXTURES_DIR/eval, prepare.py's own evaluate_bpb (its token byte table
+patched to stay on the CPU) of a tiny model over the data fixture's tokenizer
+and validation shard:
+
+  weights.safetensors   the model's parameters, PyTorch's names and layout
+  expected.json         provenance, the config, the batch size, MAX_SEQ_LEN,
+                        EVAL_TOKENS and val_bpb
 """
 
 import hashlib
@@ -173,15 +181,10 @@ def load_original(source_dir):
     return namespace, hyperparameters, extra["build_model_config"], schedules
 
 
-def make_model(ns, build_model_config, out_dir):
-    """Writes the model fixtures and returns the tiny model, its parameters as they were saved."""
-    os.makedirs(out_dir, exist_ok=True)
-    GPT, GPTConfig = ns["GPT"], ns["GPTConfig"]
-
-    # 1. The tiny model, initialised as train.py does, then perturbed (see OTHER_SUBSTITUTIONS).
-    torch.manual_seed(SEED)
-    config = GPTConfig(**TINY)
-    model = GPT(config)
+def tiny_model(ns, config, seed):
+    """Returns train.py's GPT of *config*, initialised as train.py does from *seed*, then perturbed (see OTHER_SUBSTITUTIONS)."""
+    torch.manual_seed(seed)
+    model = ns["GPT"](config)
     model.init_weights()
     s = 3**0.5 * config.n_embd**-0.5
     with torch.no_grad():
@@ -193,6 +196,17 @@ def make_model(ns, build_model_config, out_dir):
         torch.nn.init.normal_(model.lm_head.weight, mean=0.0, std=1.0)
         model.resid_lambdas.add_(0.1 * torch.randn(config.n_layer))
         model.x0_lambdas.add_(0.05 * torch.randn(config.n_layer))
+    return model
+
+
+def make_model(ns, build_model_config, out_dir):
+    """Writes the model fixtures and returns the tiny model, its parameters as they were saved."""
+    os.makedirs(out_dir, exist_ok=True)
+    GPT, GPTConfig = ns["GPT"], ns["GPTConfig"]
+
+    # 1. The tiny model.
+    config = GPTConfig(**TINY)
+    model = tiny_model(ns, config, SEED)
 
     # 2. One batch, the loss, the per-token losses and the gradients.
     idx = torch.randint(0, config.vocab_size, (BATCH, config.sequence_len))
@@ -418,9 +432,57 @@ def make_data(source_dir, out_dir):
     with open(os.path.join(out_dir, "expected.json"), "w") as f:
         json.dump(meta, f, indent=1)
         f.write("\n")
-    import shutil
-    shutil.rmtree(scratch)
     print(f"{len(docs)} documents, {len(ranks)} ranked tokens, {sum(map(len, ids))} tokens; wrote {out_dir}")
+    return prepare, tokenizer, scratch
+
+
+EVAL_TINY = dict(sequence_len=64, n_layer=4, n_head=1, n_kv_head=1, n_embd=32, window_pattern="SLS")
+EVAL_BATCH = 4
+EVAL_STEPS = 8
+EVAL_PATCHES = [
+    ('token_bytes = get_token_bytes(device="cuda")', 'token_bytes = get_token_bytes(device="cpu")',
+     "evaluate_bpb's token byte table stays on the CPU", 1),
+]
+
+
+def make_eval(ns, prepare, tokenizer, out_dir):
+    """Writes the evaluation fixture: prepare.py's own evaluate_bpb of a tiny model on the data fixture's validation shard."""
+    os.makedirs(out_dir, exist_ok=True)
+    path = prepare["__file__"]
+    code = open(path).read()
+    for old, new, _, occurrences in DATA_PATCHES + EVAL_PATCHES:
+        count = code.count(old)
+        if count != occurrences:
+            sys.exit(f"patch target occurs {count} times, not {occurrences}: {old!r}")
+        code = code.replace(old, new)
+    evaluation = {"__name__": "autoresearch_prepare", "__file__": path}
+    exec(compile(code, path, "exec"), evaluation)
+    for name in ("DATA_DIR", "TOKENIZER_DIR"):
+        evaluation[name] = prepare[name]
+    evaluation["MAX_SEQ_LEN"] = EVAL_TINY["sequence_len"]
+    evaluation["EVAL_TOKENS"] = EVAL_STEPS * EVAL_BATCH * EVAL_TINY["sequence_len"]
+
+    config = ns["GPTConfig"](vocab_size=tokenizer.get_vocab_size(), **EVAL_TINY)
+    model = tiny_model(ns, config, SEED + 2)
+    model.eval()
+    val_bpb = evaluation["evaluate_bpb"](model, tokenizer, EVAL_BATCH)
+    save_file({n: p.detach().contiguous() for n, p in model.named_parameters()}, os.path.join(out_dir, "weights.safetensors"))
+    meta = dict(
+        source="https://github.com/karpathy/autoresearch",
+        commit=COMMIT,
+        torch=torch.__version__,
+        data="../data (its tokenizer and validation shard)",
+        substitutions=[reason for _, _, reason, _ in DATA_PATCHES + EVAL_PATCHES + MODEL_PATCHES] + OTHER_SUBSTITUTIONS,
+        config=asdict(config),
+        batch_size=EVAL_BATCH,
+        max_seq_len=evaluation["MAX_SEQ_LEN"],
+        eval_tokens=evaluation["EVAL_TOKENS"],
+        val_bpb=val_bpb,
+    )
+    with open(os.path.join(out_dir, "expected.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+        f.write("\n")
+    print(f"val_bpb {val_bpb:.6f}; wrote {out_dir}")
 
 
 def main():
@@ -430,7 +492,10 @@ def main():
     ns, hyperparameters, build_model_config, schedules = load_original(source_dir)
     model = make_model(ns, build_model_config, os.path.join(fixtures_dir, "model"))
     make_optimizer(model, hyperparameters, schedules, os.path.join(fixtures_dir, "optimizer"))
-    make_data(source_dir, os.path.join(fixtures_dir, "data"))
+    prepare, tokenizer, scratch = make_data(source_dir, os.path.join(fixtures_dir, "data"))
+    make_eval(ns, prepare, tokenizer, os.path.join(fixtures_dir, "eval"))
+    import shutil
+    shutil.rmtree(scratch)
 
 
 if __name__ == "__main__":

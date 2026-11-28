@@ -1,9 +1,13 @@
 # Autoresearch pretraining script: the one file the agent edits.
-# Build with `make build` and run `bin/train`.
+# Build with `make build` (`make build CUDA=1` for CUDA) and run `bin/train --device NAME`.
 
+require "option_parser"
 require "tensomite"
-require "tensomite/blas"
 require "./src/autoresearch/constants"
+require "./src/autoresearch/device"
+require "./src/autoresearch/tokenizer"
+require "./src/autoresearch/dataloader"
+require "./src/autoresearch/evaluate"
 
 include Tensomite
 
@@ -17,18 +21,20 @@ HEAD_DIM       = 128    # target head dimension for attention
 WINDOW_PATTERN = "SSSL" # sliding window pattern: L = full, S = half context
 
 # Optimization
-EMBEDDING_LR   =   0.6       # learning rate for token embeddings (Adam)
-UNEMBEDDING_LR = 0.004       # learning rate for lm_head (Adam)
-MATRIX_LR      =  0.04       # learning rate for matrix parameters (Muon)
-SCALAR_LR      =   0.5       # learning rate for per-layer scalars (Adam)
-WEIGHT_DECAY   =   0.2       # cautious weight decay for Muon
-ADAM_BETAS     = {0.8, 0.95} # Adam beta1, beta2
-WARMUP_RATIO   = 0.0         # fraction of time budget for LR warmup
-WARMDOWN_RATIO = 0.5         # fraction of time budget for LR warmdown
-FINAL_LR_FRAC  = 0.0         # final LR as fraction of initial
+TOTAL_BATCH_SIZE = 2**14       # tokens per optimizer step
+EMBEDDING_LR     =   0.6       # learning rate for token embeddings (Adam)
+UNEMBEDDING_LR   = 0.004       # learning rate for lm_head (Adam)
+MATRIX_LR        =  0.04       # learning rate for matrix parameters (Muon)
+SCALAR_LR        =   0.5       # learning rate for per-layer scalars (Adam)
+WEIGHT_DECAY     =   0.2       # cautious weight decay for Muon
+ADAM_BETAS       = {0.8, 0.95} # Adam beta1, beta2
+WARMUP_RATIO     = 0.0         # fraction of time budget for LR warmup
+WARMDOWN_RATIO   = 0.5         # fraction of time budget for LR warmdown
+FINAL_LR_FRAC    = 0.0         # final LR as fraction of initial
 
 # Model size
-DEPTH = 8 # number of transformer layers
+DEPTH             =  4 # number of transformer layers
+DEVICE_BATCH_SIZE = 32 # sequences per forward and backward pass (reduce if out of memory)
 
 # ---------------------------------------------------------------------------
 # GPT model
@@ -322,14 +328,14 @@ def fill(param : Parameter, init : Init, rng : Random) : Nil
   param.value = init.tensor(param.shape, rng, param.value.device)
 end
 
-# Returns the config for a model of *depth* layers: `model_dim` is
-# `depth * ASPECT_RATIO` rounded up to a multiple of `HEAD_DIM`.
-def build_model_config(depth : Int32) : GPTConfig
+# Returns the config for a model of *depth* layers over *vocab_size* tokens:
+# `model_dim` is `depth * ASPECT_RATIO` rounded up to a multiple of `HEAD_DIM`.
+def build_model_config(depth : Int32, vocab_size : Int32 = Autoresearch::VOCAB_SIZE) : GPTConfig
   base_dim = depth * ASPECT_RATIO
   model_dim = ((base_dim + HEAD_DIM - 1) // HEAD_DIM) * HEAD_DIM
   num_heads = model_dim // HEAD_DIM
   GPTConfig.new(
-    sequence_len: Autoresearch::MAX_SEQ_LEN, vocab_size: Autoresearch::VOCAB_SIZE,
+    sequence_len: Autoresearch::MAX_SEQ_LEN, vocab_size: vocab_size,
     n_layer: depth, n_head: num_heads, n_kv_head: num_heads, n_embd: model_dim,
     window_pattern: WINDOW_PATTERN,
   )
@@ -539,16 +545,163 @@ end
 # Setup and training
 # ---------------------------------------------------------------------------
 
+# The peak the original's MFU is measured against, kept so the summary's
+# `mfu_percent` is computed as train.py computes it.
+H100_BF16_PEAK_FLOPS = 989.5e12
+
+# Returns *inputs* and *targets*, each `b × t` ids, as `[b, t]` tensors on *device*.
+def to_device(inputs : Array(Int32), targets : Array(Int32), b : Int32, t : Int32, device : Device) : {Tensor, Tensor}
+  {Tensor.from(inputs, [b, t], device), Tensor.from(targets, [b, t], device)}
+end
+
 def main : Nil
-  device = BLAS.default.as(Device)
-  config = build_model_config(DEPTH)
-  puts "Vocab size: #{config.vocab_size}"
+  t_start = Time.instant
+  device_name = nil
+  OptionParser.parse do |parser|
+    parser.banner = "Usage: bin/train --device #{Autoresearch.device_names.join("|")}"
+    parser.on("--device NAME", "Device to train on: #{Autoresearch.device_names.join(", ")}") { |name| device_name = name }
+    parser.on("-h", "--help", "Show this help") do
+      puts parser
+      exit
+    end
+  end
+  name = device_name
+  abort "bin/train needs --device #{Autoresearch.device_names.join("|")}" unless name
+  device = begin
+    Autoresearch.device(name)
+  rescue error : ArgumentError
+    abort error.message
+  end
+  device.reset_peak
+
+  missing = Autoresearch.missing_prepared
+  unless missing.empty?
+    abort "Prepared data not found under #{Autoresearch.cache_dir}; run bin/prepare first (set AUTORESEARCH_CACHE if it used another directory). Missing:\n  #{missing.join("\n  ")}"
+  end
+
+  tokenizer = Autoresearch::Tokenizer.from_directory
+  vocab_size = tokenizer.vocab_size
+  puts "Vocab size: #{vocab_size.format}"
+
+  config = build_model_config(DEPTH, vocab_size)
   puts "Model config: #{config}"
   model = GPT.new(config, device)
   model.init_weights(Random.new(42))
+
+  param_counts = model.num_scaling_params
   puts "Parameter counts:"
-  model.num_scaling_params.each { |key, value| puts "  #{key.ljust(24)}: #{value.format}" }
-  puts "Estimated FLOPs per token: #{"%e" % model.estimate_flops.to_f}"
+  param_counts.each { |key, value| puts "  #{key.ljust(24)}: #{value.format}" }
+  num_params = param_counts["total"]
+  num_flops_per_token = model.estimate_flops
+  puts "Estimated FLOPs per token: #{"%e" % num_flops_per_token.to_f}"
+
+  t = Autoresearch::MAX_SEQ_LEN
+  tokens_per_fwdbwd = DEVICE_BATCH_SIZE * t
+  abort "TOTAL_BATCH_SIZE #{TOTAL_BATCH_SIZE} is not a multiple of #{tokens_per_fwdbwd}" unless TOTAL_BATCH_SIZE % tokens_per_fwdbwd == 0
+  grad_accum_steps = TOTAL_BATCH_SIZE // tokens_per_fwdbwd
+
+  puts "Scaling AdamW LRs by 1/sqrt(#{config.n_embd}/768) = #{"%.6f" % ((config.n_embd / 768) ** -0.5)}"
+  optimizer = model.setup_optimizer(unembedding_lr: UNEMBEDDING_LR, embedding_lr: EMBEDDING_LR, scalar_lr: SCALAR_LR,
+    adam_betas: ADAM_BETAS, matrix_lr: MATRIX_LR, weight_decay: WEIGHT_DECAY)
+  params = model.params
+  values = params.map(&.value)
+
+  train_loader = Autoresearch::Dataloader.new(Autoresearch::Dataloader.split("train"), DEVICE_BATCH_SIZE, t)
+  inputs, targets, epoch = train_loader.next_batch
+  x, y = to_device(inputs, targets, DEVICE_BATCH_SIZE, t, device)
+
+  puts "Time budget: #{Autoresearch::TIME_BUDGET}s"
+  puts "Gradient accumulation steps: #{grad_accum_steps}"
+
+  # Training loop: each step accumulates the gradients of `grad_accum_steps`
+  # micro-batches, realising each micro-batch's gradients (and releasing its
+  # activations) before the next, then takes one optimizer step. The first ten
+  # steps are not counted towards the budget, as in train.py.
+  smooth_train_loss = 0.0
+  total_training_time = 0.0
+  step = 0
+  loop do
+    t0 = Time.instant
+    grads = [] of Tensor
+    train_loss_f = 0f32
+    grad_accum_steps.times do
+      loss = model.call(x, y)
+      micro = Tensomite.grad(loss / grad_accum_steps, values)
+      Tensor.realize(micro + [loss], release: true)
+      train_loss_f = loss.to_a(Float32).first
+      micro = micro.map(&.detach)
+      if grads.empty?
+        grads = micro
+      else
+        grads = grads.zip(micro).map { |(sum, grad)| sum + grad }
+        Tensor.realize(grads, release: true)
+      end
+      inputs, targets, epoch = train_loader.next_batch
+      x, y = to_device(inputs, targets, DEVICE_BATCH_SIZE, t, device)
+    end
+
+    # Progress and schedules
+    progress = Math.min(total_training_time / Autoresearch::TIME_BUDGET, 1.0)
+    lrm = get_lr_multiplier(progress)
+    apply_schedules(optimizer, progress, step)
+    values = optimizer.step(values, grads)
+    params.zip(values) { |param, value| param.value = value }
+
+    # Fast fail: abort if loss is exploding or NaN
+    if train_loss_f.nan? || train_loss_f > 100
+      puts "FAIL"
+      exit 1
+    end
+
+    dt = (Time.instant - t0).total_seconds
+    total_training_time += dt if step > 10
+
+    # Logging
+    ema_beta = 0.9
+    smooth_train_loss = ema_beta * smooth_train_loss + (1 - ema_beta) * train_loss_f
+    debiased_smooth_loss = smooth_train_loss / (1 - ema_beta ** (step + 1))
+    pct_done = 100 * progress
+    tok_per_sec = (TOTAL_BATCH_SIZE / dt).to_i64
+    mfu = 100.0 * num_flops_per_token * TOTAL_BATCH_SIZE / dt / H100_BF16_PEAK_FLOPS
+    remaining = Math.max(0.0, Autoresearch::TIME_BUDGET - total_training_time)
+    print "\rstep #{step.to_s.rjust(5, '0')} (#{"%.1f" % pct_done}%) | loss: #{"%.6f" % debiased_smooth_loss} | " \
+          "lrm: #{"%.2f" % lrm} | dt: #{(dt * 1000).round.to_i}ms | tok/sec: #{tok_per_sec.format} | " \
+          "mfu: #{"%.1f" % mfu}% | epoch: #{epoch} | remaining: #{remaining.round.to_i}s    "
+    STDOUT.flush
+
+    # Return the step's buffers to the device's pool before the next step allocates.
+    GC.collect
+
+    step += 1
+
+    # Time's up, but only stop after the first ten steps, which are not timed.
+    break if step > 10 && total_training_time >= Autoresearch::TIME_BUDGET
+  end
+
+  puts # newline after the \r training log
+
+  total_tokens = step * TOTAL_BATCH_SIZE
+
+  # Final eval
+  val_bpb = Autoresearch.evaluate_bpb(model, tokenizer, DEVICE_BATCH_SIZE, device)
+
+  # Final summary
+  t_end = Time.instant
+  steady_state_mfu = total_training_time > 0 ? 100.0 * num_flops_per_token * TOTAL_BATCH_SIZE * (step - 10) / total_training_time / H100_BF16_PEAK_FLOPS : 0.0
+  peak_vram_mb = device.peak_live_bytes / 1024 / 1024
+
+  puts "---"
+  puts "val_bpb:          #{"%.6f" % val_bpb}"
+  puts "training_seconds: #{"%.1f" % total_training_time}"
+  puts "total_seconds:    #{"%.1f" % (t_end - t_start).total_seconds}"
+  puts "peak_vram_mb:     #{"%.1f" % peak_vram_mb}"
+  puts "mfu_percent:      #{"%.2f" % steady_state_mfu}"
+  puts "total_tokens_M:   #{"%.1f" % (total_tokens / 1e6)}"
+  puts "num_steps:        #{step}"
+  puts "num_params_M:     #{"%.1f" % (num_params / 1e6)}"
+  puts "depth:            #{DEPTH}"
+  puts "profile:          #{Autoresearch::PROFILE}"
+  puts "device:           #{device_name}"
 end
 
 {% unless flag?(:autoresearch_spec) %}

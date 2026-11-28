@@ -45,11 +45,10 @@ tools/
 scripts/fixtures/          Python: makes the reference fixtures (the only Python here)
 bench/                     benchmarks, such as the optimizer step against a training step
 spec/                      parity specs and fixtures
-spikes/                    the spike, until absorbed (see PLAN.md)
 program.md                 the agent's instructions
 ```
 
-Two programs come out of `make build` for use, `bin/prepare` and `bin/train`, beside `bin/batch_digests` for checking and the spike. The split of `train.cr` from `src/autoresearch/` is the original's split of `train.py` from `prepare.py`, and `program.md` tells the agent the same rules: edit the one, never the other.
+Two programs come out of `make build` for use, `bin/prepare` and `bin/train`, beside `bin/batch_digests` for checking. The split of `train.cr` from `src/autoresearch/` is the original's split of `train.py` from `prepare.py`, and `program.md` tells the agent the same rules: edit the one, never the other.
 
 ## Behaviours of the original to preserve
 
@@ -79,8 +78,9 @@ These come from reading `train.py` and `prepare.py`; each is a place a port can 
 1. Constants: the hyperparameters, depth, device batch size, profile.
 2. `GPT` and its parts, as `Tensomite::Module`s. Parameters are found by instance variable, so adding one is adding a field.
 3. `MuonAdamW`, all of it in `train.cr` as in `train.py`, Newton–Schulz included (Decision E): an `Optimizer` that overrides `updates` to step Adam groups per parameter and Muon groups stacked by shape, and keeps its state through `keep`, so `state`, `restore` and buffer release work as for tensomite's own.
-4. The loop.
-5. `main`, behind a compile flag so specs can load the rest (Decision C).
+4. The loop, in `main`, behind a compile flag so specs can load the rest (Decision C). Each step accumulates `TOTAL_BATCH_SIZE / (DEVICE_BATCH_SIZE × MAX_SEQ_LEN)` micro-batches, applies the schedules by progress through the budget, and takes one optimizer step. The first ten steps are not timed. The step line shows an EMA of the loss with bias correction. A loss that is NaN or above 100 fails fast. After the budget, `Autoresearch.evaluate_bpb` (`src/autoresearch/evaluate.cr`) scores the model on the validation shards.
+
+What the loop reports differently from `train.py`, by design: it computes in F32, not under BF16 autocast (Decision G); `mfu_percent` stays relative to the H100's BF16 peak, as the original computes it; and the summary block adds `profile` and `device` lines after the original's nine.
 
 Memory and speed follow from three tensomite behaviours the loop must respect:
 
@@ -134,4 +134,4 @@ The device is chosen by flag: `cpu` is tensomite's naive oracle, kept for parity
 
 ## Open questions
 
-1. The scaled-down profile: dataset, sequence length, depth (Decision H).
+None at present.

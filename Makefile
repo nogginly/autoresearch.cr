@@ -5,7 +5,9 @@ SPEC_FLAGS  ?= --order random
 BUILD_FLAGS ?= --release
 CUDA        ?=
 
-DEVICE_FLAGS := $(if $(CUDA),-Dcuda)
+REFERENCE   ?=
+
+DEVICE_FLAGS := $(if $(CUDA),-Dcuda) $(if $(REFERENCE),-Dreference)
 
 FORMAT_PATHS := $(wildcard train.cr src spec tools bench)
 
@@ -37,7 +39,7 @@ format:
 	$(CRYSTAL) tool format $(FORMAT_PATHS)
 
 ## build: build the command-line programs into bin/ (release by default)
-build: bin/train bin/prepare bin/batch_digests bin/gpt_spike
+build: bin/train bin/prepare bin/batch_digests
 
 bin/prepare: tools/prepare.cr lib/.shards.info FORCE
 	mkdir -p bin
@@ -46,10 +48,6 @@ bin/prepare: tools/prepare.cr lib/.shards.info FORCE
 bin/train: train.cr lib/.shards.info FORCE
 	mkdir -p bin
 	$(CRYSTAL) build $(BUILD_FLAGS) $(DEVICE_FLAGS) -o $@ $<
-
-bin/gpt_spike: spikes/gpt_spike.cr lib/.shards.info FORCE
-	mkdir -p bin
-	$(CRYSTAL) build $(BUILD_FLAGS) -o $@ $<
 
 ## fixtures: regenerate spec/fixtures from the pinned original (needs Python 3 and the network)
 fixtures:

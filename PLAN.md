@@ -25,9 +25,9 @@ Tensomite's issues #156 to #176 were written for this port. A-01 to A-06 (tensom
 | Here | Original key | Tensomite |
 |---|---|---|
 | M0 Foundation (done, #1) | | |
-| M1 Reference fixtures and the model | A-01, A-02 | |
-| M2 The optimizer | A-03 | G-02, G-03 (done in 0.8.0) |
-| M3 Data tools and the dataloader | D-02 to D-05 | D-01 (done in 0.8.0) |
+| M1 Reference fixtures and the model (done, #3) | A-01, A-02 | |
+| M2 The optimizer (done, #4) | A-03 | G-02, G-03 (done in 0.8.0) |
+| M3 Data tools and the dataloader (done, #6) | D-02 to D-05 | D-01 (done in 0.8.0) |
 | M4 Training loop and metric | A-04, A-05 | G-05 (done), memory high-water mark (done in 0.8.4) |
 | M5 The agent loop | A-06 | G-09 (done) |
 | M6 Reference scale | | G-01, G-07, G-08, fused cross-entropy (M14) |
@@ -63,7 +63,7 @@ M1 and M2 can run alongside M3: one needs Python and PyTorch, the other needs th
 
 Exit: `make test` passes in CI on Linux and macOS, `make build` builds the spike, and the README's quick start works from a clean checkout.
 
-### M1: Reference fixtures and the model
+### M1: Reference fixtures and the model (done)
 
 1. A script under `scripts/fixtures/` that runs the original's model on a tiny configuration with pinned PyTorch, on CPU in `F32`, and writes SafeTensors fixtures: weights, one batch, loss, per-parameter gradients, per-token losses. Substitutions (no BF16 casts, `scaled_dot_product_attention` with the same window mask in place of FlashAttention 3) are stated in the script and the fixtures' README.
 2. The model in `train.cr`, from the spike, loaded from the fixture weights with `Module#load(transposed:)`.
@@ -71,7 +71,7 @@ Exit: `make test` passes in CI on Linux and macOS, `make build` builds the spike
 
 Exit: loss and gradients match within the documented tolerance on CPU/BLAS, on CUDA (the GB10) and on Metal (the M5 Pro); counts equal the original's; fixtures regenerate from one command.
 
-### M2: The optimizer
+### M2: The optimizer (done)
 
 1. `MuonAdamW` in `train.cr`, from the spike, with the original's per-group settings and its schedules (learning-rate multiplier, momentum warm-up, weight-decay decay).
 2. Fixtures: parameters after 1 and 5 steps from fixed gradients, with the schedule values used.
@@ -88,7 +88,7 @@ Measured (`make bench`, a 2^19-token step scaled from one micro-batch of `MAX_SE
 | Metal, M5 Pro | 8 × 2048 | 22.6 s | 723 s | 0.192 s | 0.026% |
 | CUDA, GB10 | 8 × 2048 | 25.7 s | 823 s | 0.109 s | 0.013% |
 
-### M3: Data tools and the dataloader
+### M3: Data tools and the dataloader (done)
 
 1. **Inspect first.** Read real shards and record the Parquet codec, encodings and row-group sizes. That decides how large the reader is.
 2. A `prepare` tool in this repo: `fetch`, `train-tokenizer`, `tokenize`, each resumable and each its own source file.
@@ -107,6 +107,16 @@ Exit: token ids for the first documents equal what `prepare.py` produces; tokeni
 5. A scaled-down profile (Decision H) with its own baseline numbers.
 
 Exit: a scaled-down run finishes inside its budget on BLAS, the GB10 and the M5 Pro, and prints a block that `program.md`'s greps parse; `val_bpb` on the fixture batch equals the original's to four significant digits; two runs with one seed give identical losses.
+
+The schedules follow the share of the budget used, as `train.py`'s do, so two runs' losses agree only while their timings do. The first eleven steps are untimed and see the same schedules, so the determinism check compares them exactly.
+
+Baselines, `small` profile, one run each:
+
+| Device | Steps in budget | Final loss | `val_bpb` | `peak_vram_mb` | Evaluation |
+|---|---|---|---|---|---|
+| BLAS (4-core container) | 49 | 5.73 | 2.0147 | 4,010 | 75 min |
+| CUDA, GB10 | 1,017 | 3.84 | 1.3758 | 4,049 | under 107 s |
+| Metal, M5 Pro | | | | | |
 
 ### M5: The agent loop
 
@@ -152,7 +162,17 @@ Lettered as in tensomite; each is recorded here when made.
 - **E. Where Muon lives.** Settled at M2: all of `MuonAdamW`, Newton–Schulz and its coefficients included, is in `train.cr`, as it is in `train.py`, so the agent can edit every part of it and the port needs nothing upstream. **Pending:** once M2 is done, revisit offering a generic `Muon` in tensomite for other projects; the port would not have to depend on it.
 - **F. Python only for fixtures.** Settled. Fixtures are committed, so CI needs no Python.
 - **G. `F32` until tensomite has BF16 compute.** Settled. Fixtures are made in `F32` with the original's BF16 casts removed.
-- **H. Profiles.** Open. A `reference` profile (depth 8, sequence 2,048, vocabulary 8,192) and a scaled-down one chosen at M4 (candidates: the same data with sequence 512 and depth 4; or a smaller dataset). A profile is a compile-time flag that picks a constants set, with its own cache directory.
+- **H. Profiles.** Settled before M4. The project's aim is that the loop runs unattended on the GB10 and finds real gains there; tensomite's testing comes with it, and improving `program.md` comes later. That calls for many fast experiments, so the profile is sized by optimizer steps per budget, not tokens.
+
+  | | `small` (the default) | `reference` (M6) |
+  |---|---|---|
+  | Depth, width, heads | 4, 256, 2 | 8, 512, 4 |
+  | `MAX_SEQ_LEN` | 512 | 2,048 |
+  | `TOTAL_BATCH_SIZE`, `DEVICE_BATCH_SIZE` | 2^14, 32 (no accumulation) | 2^19, 64 or fewer (8 GiB tensors) |
+  | Data, vocabulary, recipe, `TIME_BUDGET`, `EVAL_TOKENS` | the original's | the original's |
+  | Steps in 300 s on the GB10 (tensomite 0.8.3) | about 1,000, measured at 293 ms per 32 × 512 step | about 7, at 44.5 s per step |
+
+  The original takes 953 steps in its budget, so `small` keeps the schedules (momentum warm-up over 300 steps, warm-down over the second half) working as designed, and matches Karpathy's own advice for smaller machines (depth 4, shorter context, about 2^14 tokens per step). The harness picks `MAX_SEQ_LEN` with a compile flag, `-Dreference` for 2,048; the data and cache are shared. `train.cr` holds `small`'s hyperparameters as plain constants the agent edits. `EVAL_TOKENS` stays the original's unless M4 measures evaluation as too slow or the seed-to-seed spread of `val_bpb` calls for a keep threshold in `program.md` (M5). Every reported `val_bpb` states the profile.
 - **I. Reference machines.** Settled. The GB10 (DGX Spark, CUDA) carries long runs and the reference numbers from M4 on. The M5 Pro (Metal) is a supported device, not a fallback: every exit that runs a model on a GPU is shown on both, and the scaled-down profile has a baseline on each. Hosted CI has no GPU, so GPU evidence comes from runs on these two machines, pasted into the PR.
 - **J. ZSTD through libzstd.** Settled at M3. The shards are ZSTD-compressed; `bin/prepare` decompresses with the system's libzstd through a ~30-line binding, used by no other program. A pure-Crystal decoder (over 1,000 lines) and a Python conversion (against Decision F) were the alternatives.
 

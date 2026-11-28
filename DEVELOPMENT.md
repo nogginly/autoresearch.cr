@@ -61,9 +61,9 @@ flowchart LR
 
 ## Building
 
-`make build` builds every program in release mode: `bin/train` from `train.cr`, and the spike, `bin/gpt_spike`. At M1 `bin/train` builds the depth-8 model and prints its configuration, parameter counts and FLOPs per token, as `train.py` does before it trains; the loop arrives in M4, and `bin/prepare` in M3.
+`make build` builds every program in release mode: `bin/train` from `train.cr`, `bin/prepare` and `bin/batch_digests` from `tools/`. `CUDA=1` adds the CUDA device; `REFERENCE=1` builds the `reference` profile (`-Dreference`, `MAX_SEQ_LEN` 2,048) in place of the default `small` one (PLAN, Decision H).
 
-Runs that measure anything use a release build. On a 2-core container `--release` builds the spike in about 27 s and runs it about 2.5 times faster than `-O3`. That build time is part of every experiment the agent runs, so `train.cr` stays free of heavy macros.
+Runs that measure anything use a release build. On a 4-core container, a release build of `bin/train` after an edit to `train.cr` takes about 38 s; an unchanged rebuild hits the cache and takes about 3 s. That build time is part of every experiment the agent runs, so `train.cr` stays free of heavy macros.
 
 ## Devices
 
@@ -81,9 +81,32 @@ A device is where tensomite stores tensors and runs kernels. Tensomite is `F32`-
 - on the M5 Pro: `make spec`, whose output names `on Tensomite::Metal`
 - on the GB10: `make spec CUDA=1`, whose output names `on Tensomite::CUDA`
 
-`train` hard-codes `BLAS` until it takes `--device cpu|blas|cuda|metal` (PLAN M4); so does the spike.
+`bin/train` and the benchmarks take the device by name (`Autoresearch.device`, `src/autoresearch/device.cr`): `--device blas`, `metal` on Apple Silicon, or `cuda` in a `CUDA=1` build. The spike hard-codes `BLAS`.
 
 **High system time is OpenBLAS, not the collector.** OpenBLAS's worker threads busy-wait between calls, so `time` reports several times the wall time as `user` and `sys`. `OPENBLAS_NUM_THREADS=1` removes it, at little cost for models this small.
+
+## Training
+
+`bin/train --device NAME` runs `train.cr` as `train.py` runs: it builds the model from `DEPTH`, trains for `TIME_BUDGET` seconds of wall clock (the first ten steps not counted), evaluates `val_bpb` on the validation token shards, and prints the summary block:
+
+```
+---
+val_bpb:          …
+training_seconds: …
+total_seconds:    …
+peak_vram_mb:     …
+mfu_percent:      …
+total_tokens_M:   …
+num_steps:        …
+num_params_M:     …
+depth:            …
+profile:          small
+device:           cuda
+```
+
+The first nine lines are the original's, in its format; `profile` and `device` follow, so every result says what it was measured on. `peak_vram_mb` is the device's `peak_live_bytes`, as `train.py` reports `max_memory_allocated`. `mfu_percent` is computed against the H100's BF16 peak, as `train.py` computes it, so it is comparable with the original's and says nothing about the device's own peak. A loss that is NaN or above 100 prints `FAIL` and exits with status 1.
+
+It needs `bin/prepare`'s cache (`AUTORESEARCH_CACHE` or `~/.cache/autoresearch.cr`).
 
 ## Benchmarks
 
@@ -146,7 +169,7 @@ Parity specs compare `train.cr` with outputs of the PyTorch original, committed 
 make fixtures
 ```
 
-It needs Python 3 (3.13 is used; PyTorch must publish wheels for it) and the network. `scripts/fixtures/regenerate.sh` fetches `karpathy/autoresearch` at the pinned commit and creates a virtual environment from `scripts/fixtures/requirements.txt`, both under `scripts/fixtures/.cache/` (git-ignored), then runs `make_fixtures.py`. The first run takes a few minutes, mostly downloading PyTorch; the output is byte-identical between runs, so `git status` after it should show no change.
+It needs Python 3.12, 3.13 or 3.14, the versions every pinned package has wheels for (the fixtures were made with 3.13), and the network. The script uses `$PYTHON` if set, otherwise the first of `python3.13`, `python3.12`, `python3.14` and `python3` in that range. It installs no Python: if none fits, it says what is needed. A virtual environment made with another version is replaced. `scripts/fixtures/regenerate.sh` fetches `karpathy/autoresearch` at the pinned commit and creates a virtual environment from `scripts/fixtures/requirements.txt`, both under `scripts/fixtures/.cache/` (git-ignored), then runs `make_fixtures.py`. The first run takes a few minutes, mostly downloading PyTorch; the output is byte-identical between runs, so `git status` after it should show no change.
 
 To change dependencies, edit `shard.yml`, run `shards update` (or `shards install` for a new shard), and commit both files. `shard.lock` is committed so every machine, CI included, builds against the same versions.
 
@@ -179,13 +202,12 @@ shard.lock               pinned dependency versions, committed
 .github/workflows/ci.yml make deps, test and build on Linux and macOS
 ops.yml                  optional ops actions, each a make call
 .claude/agents/          the implementer subagent's definition (see "Working with agents")
-.ameba.yml               lint configuration; lib/, bin/ and spikes/ are excluded
+.ameba.yml               lint configuration; lib/ and bin/ are excluded
 spec/spec_helper.cr      requires train.cr and the devices; DEVICE, GPUS, MODEL_DEVICES, comparison helpers
 spec/*_spec.cr           specs; each milestone's exit has a `describe "Mn exit: …"` block
 spec/fixtures/           committed reference outputs, and their README
 scripts/fixtures/        regenerate.sh, make_fixtures.py and its pinned requirements (the only Python)
 bench/                   benchmarks, run in release mode with `make bench`
-spikes/gpt_spike.cr      the spike, until its pieces are absorbed (PLAN, "Bringing in the spike")
 ```
 
 DESIGN.md's "Repository layout" shows where the rest of `src/autoresearch/` and `tools/` will go.
@@ -197,7 +219,6 @@ DESIGN.md's "Repository layout" shows where the rest of `src/autoresearch/` and 
 - **Comments document the API and its outcomes:** what a type is, what a method returns or does. Inside a function, a comment lists the steps of the algorithm. No history: that goes in commit messages, and in PLAN.md when it matters to future contributors.
 - **Diagrams are Mermaid.**
 - **Library gaps go upstream.** If tensomite lacks something, open an issue there with a minimal reproduction and link it from PLAN.md. Do not work around it here.
-- **The spike stays verbatim.** `spikes/` is excluded from formatting and lint; code that leaves it for `train.cr` meets both.
 
 ### Specs
 

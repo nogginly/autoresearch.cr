@@ -1,6 +1,7 @@
 # Prints the SHA-256 of each of the first batches the dataloader packs from the
-# token shards in the cache, as JSON, for scripts/fixtures/check_prepared.py to
-# compare with prepare.py's make_dataloader.
+# token shards in the cache, as JSON with the batch shape, for
+# scripts/fixtures/check_prepared.py to compare with prepare.py's make_dataloader
+# packing the same shape.
 #
 # Usage: bin/batch_digests [batch] [sequence] [steps]
 require "digest/sha256"
@@ -18,8 +19,8 @@ def digest(inputs : Array(Int32), targets : Array(Int32)) : String
   Digest::SHA256.hexdigest(io.to_slice)
 end
 
-result = {"train", "val"}.to_h do |split|
+splits = {"train", "val"}.to_h do |split|
   loader = Autoresearch::Dataloader.new(Autoresearch::Dataloader.split(split), b, t)
   {split, Array.new(steps) { inputs, targets, epoch = loader.next_batch; {digest(inputs, targets), epoch} }}
 end
-puts result.to_json
+puts({"batch" => b, "sequence" => t, "splits" => splits}.to_json)
