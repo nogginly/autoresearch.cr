@@ -59,3 +59,18 @@ module Autoresearch
     "shard_#{index.to_s.rjust(5, '0')}.#{extension}"
   end
 end
+
+module Autoresearch
+  # Returns the prepared files training needs that are missing under *cache*: the tokenizer, the
+  # validation token shard and at least one training token shard. Empty when `bin/prepare` has finished.
+  def self.missing_prepared(cache : String = cache_dir) : Array(String)
+    tokenizer = File.join(cache, "tokenizer")
+    tokens = File.join(cache, "tokens")
+    val = shard_name(VAL_SHARD, "tokens")
+    missing = %w[tokenizer.json token_bytes.json].map { |name| File.join(tokenizer, name) }.reject { |path| File.exists?(path) }
+    missing << File.join(tokens, val) unless File.exists?(File.join(tokens, val))
+    train = Dir.exists?(tokens) && Dir.children(tokens).any? { |name| name.ends_with?(".tokens") && name != val }
+    missing << File.join(tokens, "shard_*.tokens (training)") unless train
+    missing
+  end
+end

@@ -83,3 +83,16 @@ describe Autoresearch::TokenShard do
     end
   end
 end
+
+describe "Autoresearch.missing_prepared" do
+  it "lists every missing file in an empty cache" do
+    missing = Autoresearch.missing_prepared(File.tempname("autoresearch_empty"))
+    missing.map { |path| File.basename(path) }.should eq ["tokenizer.json", "token_bytes.json", "shard_06542.tokens", "shard_*.tokens (training)"]
+  end
+
+  it "is empty once the cache is prepared" do
+    with_prepared do |tokens_dir, _|
+      Autoresearch.missing_prepared(File.dirname(tokens_dir)).should be_empty
+    end
+  end
+end

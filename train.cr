@@ -574,6 +574,11 @@ def main : Nil
   end
   device.reset_peak
 
+  missing = Autoresearch.missing_prepared
+  unless missing.empty?
+    abort "Prepared data not found under #{Autoresearch.cache_dir}; run bin/prepare first (set AUTORESEARCH_CACHE if it used another directory). Missing:\n  #{missing.join("\n  ")}"
+  end
+
   tokenizer = Autoresearch::Tokenizer.from_directory
   vocab_size = tokenizer.vocab_size
   puts "Vocab size: #{vocab_size.format}"
