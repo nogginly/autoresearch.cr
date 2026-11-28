@@ -169,7 +169,7 @@ Parity specs compare `train.cr` with outputs of the PyTorch original, committed 
 make fixtures
 ```
 
-It needs Python 3 (3.13 is used; PyTorch must publish wheels for it) and the network. `scripts/fixtures/regenerate.sh` fetches `karpathy/autoresearch` at the pinned commit and creates a virtual environment from `scripts/fixtures/requirements.txt`, both under `scripts/fixtures/.cache/` (git-ignored), then runs `make_fixtures.py`. The first run takes a few minutes, mostly downloading PyTorch; the output is byte-identical between runs, so `git status` after it should show no change.
+It needs Python 3.12, 3.13 or 3.14, the versions every pinned package has wheels for (the fixtures were made with 3.13), and the network. The script uses `$PYTHON` if set, otherwise the first of `python3.13`, `python3.12`, `python3.14` and `python3` in that range. It installs no Python: if none fits, it says what is needed. A virtual environment made with another version is replaced. `scripts/fixtures/regenerate.sh` fetches `karpathy/autoresearch` at the pinned commit and creates a virtual environment from `scripts/fixtures/requirements.txt`, both under `scripts/fixtures/.cache/` (git-ignored), then runs `make_fixtures.py`. The first run takes a few minutes, mostly downloading PyTorch; the output is byte-identical between runs, so `git status` after it should show no change.
 
 To change dependencies, edit `shard.yml`, run `shards update` (or `shards install` for a new shard), and commit both files. `shard.lock` is committed so every machine, CI included, builds against the same versions.
 

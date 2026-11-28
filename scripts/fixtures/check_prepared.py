@@ -9,7 +9,8 @@ CACHE_DIR/reference/, then the script compares:
 1. every token's bytes and byte length with tokenizer/;
 2. every document's ids, BOS first, in every shard, with tokens/;
 3. the first batches of make_dataloader (patched to stay on the CPU) with
-   BATCH_DIGESTS_JSON, which bin/batch_digests writes.
+   BATCH_DIGESTS_JSON, which bin/batch_digests writes, packed at the batch
+   shape the file records.
 
 Prints one line per check and exits non-zero on any difference.
 """
@@ -113,8 +114,9 @@ def main():
 
     # 3. The first batches of each split.
     ours = json.load(open(digests_path))
-    for split, batches in ours.items():
-        loader = prepare["make_dataloader"](tokenizer, 8, prepare["MAX_SEQ_LEN"], split)
+    b, t = ours["batch"], ours["sequence"]
+    for split, batches in ours["splits"].items():
+        loader = prepare["make_dataloader"](tokenizer, b, t, split)
         mismatched = 0
         for digest, epoch in batches:
             x, y, their_epoch = next(loader)
@@ -122,7 +124,7 @@ def main():
             theirs = hashlib.sha256(struct.pack(f"<{len(flat)}i", *flat)).hexdigest()
             mismatched += theirs != digest or their_epoch != epoch
         failures += mismatched > 0
-        print(f"{split} batches: {len(batches)} of 8 × {prepare['MAX_SEQ_LEN']}; differing: {mismatched}")
+        print(f"{split} batches: {len(batches)} of {b} × {t}; differing: {mismatched}")
     sys.exit(1 if failures else 0)
 
 
